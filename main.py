@@ -196,11 +196,9 @@ class Analysis:
 class LicenseKey:
     key: str
     created_date: datetime
-    daily_limit: int = 3
-    used_today: int = 0
-    last_reset_date: date = field(default_factory=date.today)
+    total_limit: int = 50  # 50 سؤال إجمالي بدلاً من يومي
+    used_total: int = 0    # العدد المستخدم إجمالياً
     is_active: bool = True
-    total_uses: int = 0
     user_id: Optional[int] = None
     username: Optional[str] = None
     notes: str = ""
@@ -229,11 +227,9 @@ class LicenseManager:
         if len(self.license_keys) == 0:
             await self.generate_initial_keys(40)
             await self.save_keys()
-            
-        await self.reset_daily_usage()
     
     async def generate_initial_keys(self, count: int = 40):
-        """إنشاء المفاتيح الأولية"""
+        """إنشاء المفاتيح الأولية - 50 سؤال لكل مفتاح"""
         print(f"🔑 إنشاء {count} مفتاح تفعيل...")
         
         for i in range(count):
@@ -241,7 +237,7 @@ class LicenseManager:
             license_key = LicenseKey(
                 key=key,
                 created_date=datetime.now(),
-                daily_limit=3,
+                total_limit=50,  # 50 سؤال إجمالي
                 notes=f"مفتاح أولي رقم {i+1}"
             )
             self.license_keys[key] = license_key
@@ -253,7 +249,7 @@ class LicenseManager:
         for i, (key, _) in enumerate(self.license_keys.items(), 1):
             print(f"{i:2d}. {key}")
         print("="*70)
-        print("💡 كل مفتاح يعطي 3 رسائل يومياً ويتجدد تلقائياً كل 24 ساعة بالضبط")
+        print("💡 كل مفتاح يعطي 50 سؤال إجمالي وينتهي")
         print("="*70)
     
     def generate_unique_key(self) -> str:
@@ -271,13 +267,13 @@ class LicenseManager:
             if key not in self.license_keys:
                 return key
     
-    async def create_new_key(self, daily_limit: int = 3, notes: str = "") -> str:
+    async def create_new_key(self, total_limit: int = 50, notes: str = "") -> str:
         """إنشاء مفتاح جديد"""
         key = self.generate_unique_key()
         license_key = LicenseKey(
             key=key,
             created_date=datetime.now(),
-            daily_limit=daily_limit,
+            total_limit=total_limit,
             notes=notes
         )
         self.license_keys[key] = license_key
@@ -294,11 +290,9 @@ class LicenseManager:
                     key = LicenseKey(
                         key=key_data['key'],
                         created_date=datetime.fromisoformat(key_data['created_date']),
-                        daily_limit=key_data.get('daily_limit', 3),
-                        used_today=key_data.get('used_today', 0),
-                        last_reset_date=date.fromisoformat(key_data.get('last_reset_date', str(date.today()))),
+                        total_limit=key_data.get('total_limit', 50),  # تحديث للنظام الجديد
+                        used_total=key_data.get('used_total', 0),
                         is_active=key_data.get('is_active', True),
-                        total_uses=key_data.get('total_uses', 0),
                         user_id=key_data.get('user_id'),
                         username=key_data.get('username'),
                         notes=key_data.get('notes', '')
@@ -322,11 +316,9 @@ class LicenseManager:
                     {
                         'key': key.key,
                         'created_date': key.created_date.isoformat(),
-                        'daily_limit': key.daily_limit,
-                        'used_today': key.used_today,
-                        'last_reset_date': key.last_reset_date.isoformat(),
+                        'total_limit': key.total_limit,
+                        'used_total': key.used_total,
                         'is_active': key.is_active,
-                        'total_uses': key.total_uses,
                         'user_id': key.user_id,
                         'username': key.username,
                         'notes': key.notes
@@ -341,28 +333,8 @@ class LicenseManager:
         except Exception as e:
             print(f"❌ خطأ في حفظ المفاتيح: {e}")
     
-    async def reset_daily_usage(self):
-        """إعادة تعيين الاستخدام اليومي"""
-        now = datetime.now()
-        today = now.date()
-        reset_count = 0
-        
-        for key in self.license_keys.values():
-            if key.last_reset_date < today:
-                last_reset_datetime = datetime.combine(key.last_reset_date, datetime.min.time())
-                if (now - last_reset_datetime).total_seconds() >= 86400:
-                    key.used_today = 0
-                    key.last_reset_date = today
-                    reset_count += 1
-        
-        if reset_count > 0:
-            print(f"🔄 تم تجديد {reset_count} مفتاح للاستخدام اليومي")
-            await self.save_keys()
-    
     async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
-        """فحص صحة المفتاح"""
-        await self.reset_daily_usage()
-        
+        """فحص صحة المفتاح - نظام 50 سؤال"""
         if key not in self.license_keys:
             return False, "❌ مفتاح التفعيل غير صالح"
         
@@ -374,14 +346,13 @@ class LicenseManager:
         if license_key.user_id and license_key.user_id != user_id:
             return False, "❌ مفتاح التفعيل مستخدم من قبل مستخدم آخر"
         
-        if license_key.used_today >= license_key.daily_limit:
-            time_until_reset = self._get_time_until_reset()
-            return False, f"❌ تم استنفاد الحد اليومي ({license_key.daily_limit} رسائل)\n⏰ سيتم التجديد خلال {time_until_reset}\n\n💡 كل مفتاح له 3 رسائل فقط يومياً"
+        if license_key.used_total >= license_key.total_limit:
+            return False, f"❌ انتهت صلاحية المفتاح\n💡 تم استنفاد الـ {license_key.total_limit} أسئلة\n📞 للحصول على مفتاح جديد: @Odai_xau"
         
         return True, "✅ مفتاح صالح"
     
     async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis") -> Tuple[bool, str]:
-        """استخدام المفتاح"""
+        """استخدام المفتاح - نظام 50 سؤال"""
         is_valid, message = await self.validate_key(key, user_id)
         
         if not is_valid:
@@ -393,30 +364,18 @@ class LicenseManager:
             license_key.user_id = user_id
             license_key.username = username
         
-        license_key.used_today += 1
-        license_key.total_uses += 1
+        license_key.used_total += 1
         
         await self.save_keys()
         
-        remaining = license_key.daily_limit - license_key.used_today
+        remaining = license_key.total_limit - license_key.used_total
         
         if remaining == 0:
-            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ هذه آخر رسالة اليوم!\n⏰ سيتم التجديد خلال {self._get_time_until_reset()}"
-        elif remaining == 1:
-            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ تبقت رسالة واحدة فقط اليوم!"
+            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ هذا آخر سؤال! انتهت صلاحية المفتاح\n📞 للحصول على مفتاح جديد: @Odai_xau"
+        elif remaining <= 5:
+            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ تبقى {remaining} أسئلة فقط!"
         else:
-            return True, f"✅ تم استخدام المفتاح بنجاح\n📊 الرسائل المتبقية اليوم: {remaining}"
-    
-    def _get_time_until_reset(self) -> str:
-        """حساب الوقت حتى التجديد"""
-        now = datetime.now()
-        tomorrow = datetime.combine(date.today() + timedelta(days=1), datetime.min.time())
-        time_left = tomorrow - now
-        
-        hours = time_left.seconds // 3600
-        minutes = (time_left.seconds % 3600) // 60
-        
-        return f"{hours} ساعة و {minutes} دقيقة"
+            return True, f"✅ تم استخدام المفتاح بنجاح\n📊 الأسئلة المتبقية: {remaining} من {license_key.total_limit}"
     
     async def get_key_info(self, key: str) -> Optional[Dict]:
         """الحصول على معلومات المفتاح"""
@@ -428,14 +387,12 @@ class LicenseManager:
         return {
             'key': key,
             'is_active': license_key.is_active,
-            'daily_limit': license_key.daily_limit,
-            'used_today': license_key.used_today,
-            'remaining_today': license_key.daily_limit - license_key.used_today,
-            'total_uses': license_key.total_uses,
+            'total_limit': license_key.total_limit,
+            'used_total': license_key.used_total,
+            'remaining_total': license_key.total_limit - license_key.used_total,
             'user_id': license_key.user_id,
             'username': license_key.username,
             'created_date': license_key.created_date.strftime('%Y-%m-%d'),
-            'last_reset': license_key.last_reset_date.strftime('%Y-%m-%d'),
             'notes': license_key.notes
         }
     
@@ -444,22 +401,24 @@ class LicenseManager:
         total_keys = len(self.license_keys)
         active_keys = sum(1 for key in self.license_keys.values() if key.is_active)
         used_keys = sum(1 for key in self.license_keys.values() if key.user_id is not None)
+        expired_keys = sum(1 for key in self.license_keys.values() if key.used_total >= key.total_limit)
         
-        today_usage = sum(key.used_today for key in self.license_keys.values())
-        total_usage = sum(key.total_uses for key in self.license_keys.values())
+        total_usage = sum(key.used_total for key in self.license_keys.values())
+        total_available = sum(key.total_limit - key.used_total for key in self.license_keys.values() if key.used_total < key.total_limit)
         
         return {
             'total_keys': total_keys,
             'active_keys': active_keys,
             'used_keys': used_keys,
             'unused_keys': total_keys - used_keys,
-            'today_usage': today_usage,
+            'expired_keys': expired_keys,
             'total_usage': total_usage,
+            'total_available': total_available,
             'avg_usage_per_key': total_usage / total_keys if total_keys > 0 else 0
         }
     
     async def delete_user_by_key(self, key: str) -> Tuple[bool, str]:
-        """حذف مستخدم من المفتاح"""
+        """حذف مستخدم من المفتاح وإعادة تعيين الاستخدام"""
         if key not in self.license_keys:
             return False, "❌ المفتاح غير موجود"
         
@@ -472,11 +431,11 @@ class LicenseManager:
         
         license_key.user_id = None
         license_key.username = None
-        license_key.used_today = 0
+        license_key.used_total = 0  # إعادة تعيين العداد
         
         await self.save_keys()
         
-        return True, f"✅ تم حذف المستخدم {old_username or old_user_id} من المفتاح {key}"
+        return True, f"✅ تم حذف المستخدم {old_username or old_user_id} من المفتاح {key}\n🔄 تم إعادة تعيين العداد إلى 0"
 
 # ==================== Database Manager ====================
 class DatabaseManager:
@@ -1215,10 +1174,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_activated:
         # للمستخدمين المفعلين - ترحيب خاص (HTML بدلاً من Markdown)
-        key_info = await context.bot_data['license_manager'].get_key_info(user.license_key) if user.license_key else None
-        remaining_msgs = key_info['remaining_today'] if key_info else "∞"
-        
-        welcome_message = f"""╔══════════════════════════════════════╗
+
+key_info = await context.bot_data['license_manager'].get_key_info(user.license_key) if user.license_key else None
+remaining_msgs = key_info['remaining_total'] if key_info else "∞"
+
+welcome_message = f"""╔══════════════════════════════════════╗
 ║     🔥 <b>مرحباً في عالم النخبة</b> 🔥     ║
 ╚══════════════════════════════════════╝
 
@@ -1228,21 +1188,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ┌─────────────────────────────────────┐
 │  ✅ <b>حسابك مُفعَّل ومجهز للعمل</b>   │
-│  🎯 الرسائل المتبقية اليوم: <b>{remaining_msgs}</b>  │
-│  🔄 يتجدد العداد كل 24 ساعة بالضبط    │
+│  🎯 الأسئلة المتبقية: <b>{remaining_msgs}</b>        │
+│  💡 المفتاح ينتهي بعد استنفاد الأسئلة   │
 └─────────────────────────────────────┘
 
 🎯 <b>اختر نوع التحليل المطلوب:</b>"""
 
-        await update.message.reply_text(
-            welcome_message,
-            reply_markup=create_main_keyboard(user),
-            parse_mode=ParseMode.HTML,  # HTML بدلاً من Markdown
-            disable_web_page_preview=True
-        )
-    else:
-        # للمستخدمين غير المفعلين (بدون markdown خطير)
-        welcome_message = f"""╔══════════════════════════════════════╗
+# وللمستخدمين غير المفعلين:
+welcome_message = f"""╔══════════════════════════════════════╗
 ║   💎 <b>Gold Nightmare Academy</b> 💎   ║
 ║     أقوى منصة تحليل الذهب بالعالم     ║
 ╚══════════════════════════════════════╝
@@ -1265,10 +1218,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🎁 <b>عرض محدود - مفاتيح متاحة الآن!</b>
 
 🔑 كل مفتاح يعطيك:
-   ⚡ 3 تحليلات احترافية يومياً
-   🔄 تجديد تلقائي كل 24 ساعة
+   ⚡ 50 تحليل احترافي كامل
+   🧠 تحليل بالذكاء الاصطناعي المتقدم
+   📊 تحليل متعدد الأطر الزمنية
    🎯 وصول للتحليل الشامل المتقدم
    📱 دعم فني مباشر
+   💡 المفتاح ينتهي بعد 50 سؤال
 
 💡 <b>للحصول على مفتاح التفعيل:</b>
 تواصل مع المطور المختص"""
@@ -1326,15 +1281,15 @@ async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     key_info = await license_manager.get_key_info(license_key)
     
-    success_message = f"""✅ تم التفعيل بنجاح!
+success_message = f"""✅ تم التفعيل بنجاح!
 
 🔑 المفتاح: {license_key}
-📊 الحد اليومي: {key_info['daily_limit']} رسائل
-📈 المتبقي اليوم: {key_info['remaining_today']} رسائل
-⏰ يتجدد العداد كل 24 ساعة تلقائياً بالضبط
+📊 الحد الإجمالي: {key_info['total_limit']} سؤال
+📈 المتبقي: {key_info['remaining_total']} سؤال
+💡 المفتاح ينتهي بعد استنفاد الأسئلة
 
 🎉 يمكنك الآن استخدام البوت والحصول على التحليلات المتقدمة!"""
-    
+
     await update.message.reply_text(
         success_message,
         reply_markup=create_main_keyboard(user)
@@ -1469,8 +1424,9 @@ GOLD-XXXX-XXXX-XXXX
 
 ⚠️ ملاحظات مهمة:
 • لديك 3 رسائل فقط يومياً
-• يتجدد العداد كل 24 ساعة بالضبط
-```"""
+• 💡 50 سؤال إجمالي وينتهي المفتاح
+
+
     
     await send_long_message(update, message)
 
@@ -1757,25 +1713,30 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ==================== Enhanced Handler Functions ====================
 async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج التحليل التجريبي للمستخدمين غير المفعلين"""
+    """معالج التحليل التجريبي - مرة واحدة فقط"""
     query = update.callback_query
     user_id = query.from_user.id
     
-    # التحقق من عدد مرات استخدام التجربة (3 مرات كحد أقصى)
+    # التحقق من الاستخدام السابق - مرة واحدة فقط
     demo_usage = context.user_data.get('demo_usage', 0)
     
-    if demo_usage >= 3:
+    if demo_usage >= 1:  # مرة واحدة فقط!
         await query.edit_message_text(
-            "🚫 **انتهت المحاولات التجريبية**\n\n"
-            "لقد استخدمت الحد الأقصى من التحليلات التجريبية (3 مرات).\n\n"
-            "🔥 **للاستمتاع بتحليلات لا محدودة:**\n"
-            "احصل على مفتاح تفعيل من المطور\n\n"
-            "💎 **مع المفتاح ستحصل على:**\n"
-            "• 3 تحليلات احترافية يومياً\n"
-            "• تجديد تلقائي كل 24 ساعة\n"
-            "• التحليل الشامل المتقدم\n"
-            "• دعم فني مباشر\n\n"
-            "👨‍💼 **تواصل مع المطور:** @Odai_xau",
+            """🚫 انتهت الفرصة التجريبية
+
+لقد استخدمت التحليل التجريبي المجاني مسبقاً (مرة واحدة فقط).
+
+🔥 للحصول على تحليلات لا محدودة:
+احصل على مفتاح تفعيل من المطور
+
+💎 مع المفتاح ستحصل على:
+• 50 تحليل احترافي كامل
+• تحليل بالذكاء الاصطناعي المتقدم
+• جميع أنواع التحليل (سريع، شامل، سكالب، سوينج)
+• التحليل الشامل المتقدم للمحترفين
+• دعم فني مباشر
+
+👨‍💼 تواصل مع المطور: @Odai_xau""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odai_xau")],
                 [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
@@ -1784,12 +1745,13 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     # رسالة التحضير
-    remaining_demos = 3 - demo_usage
     await query.edit_message_text(
-        f"🎯 **تحليل تجريبي مجاني**\n\n"
-        f"⚡ جاري تحضير تحليل احترافي للذهب...\n"
-        f"📊 المحاولات المتبقية: **{remaining_demos - 1}** من 3\n\n"
-        f"⏳ يرجى الانتظار..."
+        """🎯 تحليل تجريبي مجاني - الفرصة الوحيدة
+
+⚡ جاري تحضير تحليل احترافي للذهب...
+⭐ هذه فرصتك الوحيدة للتجربة المجانية
+
+⏳ يرجى الانتظار..."""
     )
     
     try:
@@ -1799,15 +1761,13 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text("❌ لا يمكن الحصول على السعر حالياً.")
             return
         
-        # إنشاء تحليل تجريبي مبسط
+        # تحليل تجريبي مبسط
         demo_prompt = """قدم تحليل سريع احترافي للذهب الآن مع:
         - توصية واضحة (Buy/Sell/Hold)
         - سبب قوي واحد
         - هدف واحد ووقف خسارة
         - نسبة ثقة
-        - تنسيق جميل ومنظم
-        
-        اجعله مثيراً ومحترفاً ليشجع المستخدم على الحصول على المفتاح للتحليلات المتقدمة"""
+        - تنسيق جميل ومنظم"""
         
         result = await context.bot_data['claude_manager'].analyze_gold(
             prompt=demo_prompt,
@@ -1815,28 +1775,28 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
             analysis_type=AnalysisType.QUICK
         )
         
-        # إضافة رسالة تسويقية للتحليل التجريبي
-        demo_result = f"""🎯 **تحليل تجريبي مجاني - Gold Nightmare**
+        # رسالة تسويقية قوية
+        demo_result = f"""🎯 تحليل تجريبي مجاني - Gold Nightmare
 
 {result}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔥 **هذا مجرد طعم من قوة التحليلات الكاملة!**
+🔥 هذا مجرد طعم من قوة تحليلاتنا الكاملة!
 
-💎 **مع مفتاح التفعيل ستحصل على:**
-⚡ تحليلات متعددة الأنواع (سكالب، سوينج، توقعات)
-📊 تحليل شامل لجميع الأطر الزمنية
+💎 مع مفتاح التفعيل ستحصل على:
+⚡ 50 تحليل احترافي كامل
+📊 تحليل شامل لجميع الأطر الزمنية  
 🎯 نقاط دخول وخروج بالسنت الواحد
 🛡️ إدارة مخاطر احترافية
 🔮 توقعات ذكية مع احتماليات
 📰 تحليل تأثير الأخبار
 🔄 اكتشاف نقاط الانعكاس
-🔥 التحليل الشامل المتقدم للمحترفين
+🔥 التحليل الشامل المتقدم
 
-📊 **المتبقي من المحاولات التجريبية:** {remaining_demos - 1} من 3
+⚠️ هذه كانت فرصتك الوحيدة للتجربة المجانية
 
-🚀 **انضم لمجتمع النخبة الآن!**"""
+🚀 انضم لمجتمع النخبة الآن!"""
 
         await query.edit_message_text(
             demo_result,
@@ -1847,14 +1807,15 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
             ])
         )
         
-        # تحديث عداد الاستخدام التجريبي
-        context.user_data['demo_usage'] = demo_usage + 1
+        # تسجيل الاستخدام
+        context.user_data['demo_usage'] = 1
         
     except Exception as e:
         logger.error(f"Error in demo analysis: {e}")
         await query.edit_message_text(
-            "❌ حدث خطأ في التحليل التجريبي.\n\n"
-            "🔄 يمكنك المحاولة مرة أخرى أو التواصل مع الدعم.",
+            """❌ حدث خطأ في التحليل التجريبي.
+
+🔄 يمكنك المحاولة مرة أخرى أو التواصل مع الدعم.""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 محاولة أخرى", callback_data="demo_analysis")],
                 [InlineKeyboardButton("📞 الدعم", url="https://t.me/Odai_xau")],
@@ -2009,14 +1970,15 @@ async def handle_enhanced_price_display(update: Update, context: ContextTypes.DE
         await query.edit_message_text("❌ خطأ في جلب بيانات السعر")
 
 async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج معلومات المفتاح المحسن"""
+    """معالج معلومات المفتاح - نظام 50 سؤال"""
     query = update.callback_query
     user = context.user_data.get('user')
     
     if not user or not user.license_key:
         await query.edit_message_text(
-            "❌ لا يوجد مفتاح مفعل\n\n"
-            "للحصول على مفتاح تفعيل تواصل مع المطور",
+            """❌ لا يوجد مفتاح مفعل
+
+للحصول على مفتاح تفعيل تواصل مع المطور""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odai_xau")],
                 [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
@@ -2030,20 +1992,23 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
             await query.edit_message_text("❌ لا يمكن جلب معلومات المفتاح")
             return
         
+        # حساب النسبة المئوية
+        usage_percentage = (key_info['used_total'] / key_info['total_limit']) * 100
+        
         key_info_message = f"""╔══════════════════════════════════════╗
-║        🔑 **معلومات مفتاح التفعيل** 🔑        ║
+║        🔑 معلومات مفتاح التفعيل 🔑        ║
 ╚══════════════════════════════════════╝
 
-🆔 **المعرف:** {key_info['username'] or 'غير محدد'}
-🏷️ **المفتاح:** `{key_info['key'][:8]}***`
-📅 **تاريخ التفعيل:** {key_info['created_date']}
+🆔 المعرف: {key_info['username'] or 'غير محدد'}
+🏷️ المفتاح: {key_info['key'][:8]}***
+📅 تاريخ التفعيل: {key_info['created_date']}
 
-📈 **الاستخدام:** {key_info['used_today']}/{key_info['daily_limit']} رسائل
-📉 **المتبقي:** {key_info['remaining_today']} رسائل
-🔢 **إجمالي الاستخدام:** {key_info['total_uses']} رسالة
+📊 الاستخدام: {key_info['used_total']}/{key_info['total_limit']} أسئلة
+📈 المتبقي: {key_info['remaining_total']} أسئلة
+📉 نسبة الاستخدام: {usage_percentage:.1f}%
 
-💎 **Gold Nightmare Academy - عضوية نشطة**
-🚀 **أنت جزء من مجتمع النخبة في تحليل الذهب!**"""
+💎 Gold Nightmare Academy - عضوية نشطة
+🚀 أنت جزء من مجتمع النخبة في تحليل الذهب!"""
         
         await query.edit_message_text(
             key_info_message,
@@ -2255,21 +2220,79 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         
         elif data == "admin_panel" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
-                "👨‍💼 **لوحة الإدارة**\n\nاختر العملية المطلوبة:",
+                "👨‍💼 لوحة الإدارة\n\nاختر العملية المطلوبة:",
                 reply_markup=create_admin_keyboard()
             )
         
-        else:
+        # معالجات الإدارة
+        elif data == "admin_stats" and user_id == Config.MASTER_USER_ID:
+            await handle_admin_stats(update, context)
+        
+        elif data == "admin_keys" and user_id == Config.MASTER_USER_ID:
+            await handle_admin_keys(update, context)
+        
+        elif data == "keys_show_all" and user_id == Config.MASTER_USER_ID:
+            await handle_keys_show_all(update, context)
+        
+        elif data == "keys_show_unused" and user_id == Config.MASTER_USER_ID:
+            await handle_keys_show_unused(update, context)
+        
+        elif data == "keys_create_prompt" and user_id == Config.MASTER_USER_ID:
+            await handle_keys_create_prompt(update, context)
+        
+        elif data == "keys_stats" and user_id == Config.MASTER_USER_ID:
+            await handle_keys_stats(update, context)
+        
+        elif data == "keys_delete_user" and user_id == Config.MASTER_USER_ID:
+            await handle_keys_delete_user(update, context)
+        
+        elif data == "create_backup" and user_id == Config.MASTER_USER_ID:
+            await handle_create_backup(update, context)
+        
+        # معالجات إدارية أخرى (يمكن تطويرها لاحقاً)
+        elif data == "admin_users" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
-                "❌ خيار غير معروف. استخدم /start للعودة للقائمة الرئيسية."
+                "👥 إدارة المستخدمين\n\n🚧 هذه الميزة قيد التطوير",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+                ])
             )
         
-    except Exception as e:
-        logger.error(f"Error in callback query '{data}': {e}")
-        await query.edit_message_text(
-            "❌ حدث خطأ تقني.\n\nاستخدم /start للمتابعة."
-        )
-
+        elif data == "admin_analyses" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text(
+                "📈 تقارير التحليل\n\n🚧 هذه الميزة قيد التطوير",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+                ])
+            )
+        
+        elif data == "view_logs" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text(
+                "📝 سجل الأخطاء\n\n🚧 هذه الميزة قيد التطوير",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+                ])
+            )
+        
+        elif data == "system_settings" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text(
+                "⚙️ إعدادات النظام\n\n🚧 هذه الميزة قيد التطوير",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
+                ])
+            )
+        
+        elif data == "restart_bot" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text(
+                "🔄 إعادة تشغيل البوت\n\n⚠️ هذه العملية ستوقف البوت مؤقتاً",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ تأكيد إعادة التشغيل", callback_data="confirm_restart")],
+                    [InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel")]
+                ])
+            )
+        
+        elif data == "confirm_restart" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text("🔄 جاري إعادة تشغيل البوت...")
 # ==================== Admin Message Handler ====================
 async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج رسائل الأدمن للعمليات الخاصة"""
