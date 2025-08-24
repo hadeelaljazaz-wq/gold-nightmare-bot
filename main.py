@@ -136,6 +136,22 @@ def setup_logging():
     return logger
 
 logger = setup_logging()
+# ==================== Markdown Text Cleaner ====================
+def clean_markdown_text(text: str) -> str:
+    """تنظيف النص من markdown المُشكِل"""
+    if not text:
+        return text
+    
+    # استبدال الرموز المُشكِلة
+    text = text.replace('**', '')  # حذف النجمتين
+    text = text.replace('*', '')   # حذف النجمة الواحدة  
+    text = text.replace('__', '')  # حذف الخطوط السفلية
+    text = text.replace('_', '')   # حذف الخط السفلي الواحد
+    text = text.replace('`', '')   # حذف الـ backticks
+    text = text.replace('[', '(')  # استبدال الأقواس المربعة
+    text = text.replace(']', ')')
+    
+    return text
 
 # ==================== Data Models ====================
 @dataclass
@@ -957,11 +973,22 @@ class SecurityManager:
 
 # ==================== Telegram Utilities ====================
 async def send_long_message(update: Update, text: str, parse_mode: str = None):
-    """إرسال رسائل طويلة"""
+    """إرسال رسائل طويلة مع معالجة أخطاء Markdown"""
     max_length = 4000
     
+    # تنظيف النص إذا كان Markdown
+    if parse_mode == ParseMode.MARKDOWN:
+        text = clean_markdown_text(text)
+        parse_mode = None  # إلغاء markdown بعد التنظيف
+    
     if len(text) <= max_length:
-        await update.message.reply_text(text, parse_mode=parse_mode)
+        try:
+            await update.message.reply_text(text, parse_mode=parse_mode)
+        except Exception as e:
+            # في حالة فشل parsing، إرسال بدون formatting
+            logger.error(f"Markdown parsing error: {e}")
+            clean_text = clean_markdown_text(text)
+            await update.message.reply_text(clean_text)
         return
     
     parts = []
@@ -978,10 +1005,18 @@ async def send_long_message(update: Update, text: str, parse_mode: str = None):
         parts.append(current_part)
     
     for i, part in enumerate(parts):
-        await update.message.reply_text(
-            part + (f"\n\n🔄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else ""),
-            parse_mode=parse_mode
-        )
+        try:
+            await update.message.reply_text(
+                part + (f"\n\n🔄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else ""),
+                parse_mode=parse_mode
+            )
+        except Exception as e:
+            # في حالة فشل parsing، إرسال بدون formatting
+            logger.error(f"Markdown parsing error in part {i+1}: {e}")
+            clean_part = clean_markdown_text(part)
+            await update.message.reply_text(
+                clean_part + (f"\n\n🔄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else "")
+            )
         await asyncio.sleep(0.5)
 
 def create_main_keyboard(user: User) -> InlineKeyboardMarkup:
@@ -1155,8 +1190,9 @@ def admin_only(func):
     return wrapper
 
 # ==================== Command Handlers ====================
+# 1. استبدل دالة start_command بهذه النسخة المحسنة:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر البداية المحسن مع واجهة أفضل"""
+    """أمر البداية المحسن مع إصلاح Markdown"""
     user_id = update.effective_user.id
     
     user = await context.bot_data['db'].get_user(user_id)
@@ -1171,64 +1207,62 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # الحصول على سعر الذهب الحالي للعرض
     try:
         gold_price = await context.bot_data['gold_price_manager'].get_gold_price()
-        price_display = f"💰 السعر الحالي: **${gold_price.price}**\n📊 التغيير: **{gold_price.change_24h:+.2f} ({gold_price.change_percentage:+.2f}%)**"
+        price_display = f"💰 السعر الحالي: ${gold_price.price}\n📊 التغيير: {gold_price.change_24h:+.2f} ({gold_price.change_percentage:+.2f}%)"
     except:
         price_display = "💰 السعر: يتم التحديث..."
 
     is_activated = (user.license_key and user.is_activated) or user_id == Config.MASTER_USER_ID
     
     if is_activated:
-        # للمستخدمين المفعلين - ترحيب خاص
+        # للمستخدمين المفعلين - ترحيب خاص (HTML بدلاً من Markdown)
         key_info = await context.bot_data['license_manager'].get_key_info(user.license_key) if user.license_key else None
         remaining_msgs = key_info['remaining_today'] if key_info else "∞"
         
-        welcome_message = f"""
-╔══════════════════════════════════════╗
-║     🔥 **مرحباً في عالم النخبة** 🔥     ║
+        welcome_message = f"""╔══════════════════════════════════════╗
+║     🔥 <b>مرحباً في عالم النخبة</b> 🔥     ║
 ╚══════════════════════════════════════╝
 
-👋 أهلاً وسهلاً **{update.effective_user.first_name}**!
+👋 أهلاً وسهلاً <b>{update.effective_user.first_name}</b>!
 
 {price_display}
 
 ┌─────────────────────────────────────┐
-│  ✅ **حسابك مُفعَّل ومجهز للعمل**   │
-│  🎯 الرسائل المتبقية اليوم: **{remaining_msgs}**  │
+│  ✅ <b>حسابك مُفعَّل ومجهز للعمل</b>   │
+│  🎯 الرسائل المتبقية اليوم: <b>{remaining_msgs}</b>  │
 │  🔄 يتجدد العداد كل 24 ساعة بالضبط    │
 └─────────────────────────────────────┘
 
-🎯 **اختر نوع التحليل المطلوب:**"""
+🎯 <b>اختر نوع التحليل المطلوب:</b>"""
 
         await update.message.reply_text(
             welcome_message,
             reply_markup=create_main_keyboard(user),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,  # HTML بدلاً من Markdown
             disable_web_page_preview=True
         )
     else:
-        # للمستخدمين غير المفعلين
-        welcome_message = f"""
-╔══════════════════════════════════════╗
-║   💎 **Gold Nightmare Academy** 💎   ║
+        # للمستخدمين غير المفعلين (بدون markdown خطير)
+        welcome_message = f"""╔══════════════════════════════════════╗
+║   💎 <b>Gold Nightmare Academy</b> 💎   ║
 ║     أقوى منصة تحليل الذهب بالعالم     ║
 ╚══════════════════════════════════════╝
 
-👋 مرحباً **{update.effective_user.first_name}**!
+👋 مرحباً <b>{update.effective_user.first_name}</b>!
 
 {price_display}
 
-┌─────────── 🏆 **لماذا نحن الأفضل؟** ───────────┐
+┌─────────── 🏆 <b>لماذا نحن الأفضل؟</b> ───────────┐
 │                                               │
-│ 🧠 **ذكاء اصطناعي متطور** - Claude 4 Sonnet   │
-│ 📊 **تحليل متعدد الأطر الزمنية** بدقة 95%+     │
-│ 🎯 **نقاط دخول وخروج** بالسنت الواحد          │
-│ 🛡️ **إدارة مخاطر احترافية** مؤسسية           │
-│ 📈 **توقعات مستقبلية** مع نسب ثقة دقيقة        │
-│ 🔥 **تحليل شامل متقدم** للمحترفين              │
+│ 🧠 <b>ذكاء اصطناعي متطور</b> - Claude 4 Sonnet   │
+│ 📊 <b>تحليل متعدد الأطر الزمنية</b> بدقة 95%+     │
+│ 🎯 <b>نقاط دخول وخروج</b> بالسنت الواحد          │
+│ 🛡️ <b>إدارة مخاطر احترافية</b> مؤسسية           │
+│ 📈 <b>توقعات مستقبلية</b> مع نسب ثقة دقيقة        │
+│ 🔥 <b>تحليل شامل متقدم</b> للمحترفين              │
 │                                               │
 └───────────────────────────────────────────────┘
 
-🎁 **عرض محدود - مفاتيح متاحة الآن!**
+🎁 <b>عرض محدود - مفاتيح متاحة الآن!</b>
 
 🔑 كل مفتاح يعطيك:
    ⚡ 3 تحليلات احترافية يومياً
@@ -1236,7 +1270,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
    🎯 وصول للتحليل الشامل المتقدم
    📱 دعم فني مباشر
 
-💡 **للحصول على مفتاح التفعيل:**
+💡 <b>للحصول على مفتاح التفعيل:</b>
 تواصل مع المطور المختص"""
 
         keyboard = [
@@ -1249,9 +1283,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             welcome_message,
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,  # HTML بدلاً من Markdown
             disable_web_page_preview=True
         )
+
 
 async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر تفعيل المفتاح"""
@@ -2293,9 +2328,19 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ==================== Error Handler ====================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالج الأخطاء"""
+    """معالج الأخطاء المحسن"""
     logger.error(f"Exception while handling an update: {context.error}")
-
+    
+    # إذا كان الخطأ في parsing، حاول إرسال رسالة بديلة
+    if "Can't parse entities" in str(context.error):
+        try:
+            if update and hasattr(update, 'message') and update.message:
+                await update.message.reply_text(
+                    "❌ حدث خطأ في تنسيق الرسالة. تم إرسال النص بدون تنسيق.\n"
+                    "استخدم /start للمتابعة."
+                )
+        except:
+            pass  # تجنب إرسال أخطاء إضافية
 # ==================== Main Function for Render Webhook ====================
 async def setup_webhook():
     """إعداد webhook وحذف أي polling سابق"""
