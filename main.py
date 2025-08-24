@@ -4,7 +4,7 @@
 Gold Nightmare Bot - Complete Advanced Analysis & Risk Management System
 بوت تحليل الذهب الاحترافي مع نظام مفاتيح التفعيل المتقدم
 Version: 6.0 Professional Enhanced - Render Webhook Edition
-Author: Adi - Gold Nightmare School
+Author: odai - Gold Nightmare School
 """
 
 import logging
