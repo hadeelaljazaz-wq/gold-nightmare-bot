@@ -1624,16 +1624,19 @@ def run_flask():
     )
 
 # تشغيل Flask في ثريد منفصل
-threading.Thread(target=run_flask, daemon=True).start()
+  try:
+    # تشغيل Flask في ثريد منفصل
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    except Exception as e:
-        logger.error(f"❌ Server error: {e}")
-    finally:
-        # تنظيف الموارد
-        await gold_price_manager.close()
-        await db_manager.save_data()
-        await license_manager.save_keys()
-        await application.shutdown()
+except Exception as e:
+    logger.error(f"❌ Server error: {e}")
+
+finally:
+    # تنظيف الموارد
+    await gold_price_manager.close()
+    await db_manager.save_data()
+    await license_manager.save_keys()
+    await application.shutdown()
 
 def run_bot():
     """تشغيل البوت"""
