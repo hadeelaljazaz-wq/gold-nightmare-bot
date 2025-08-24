@@ -1519,7 +1519,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # استخدام اليوم
         today_usage = sum(k.used_today for k in license_manager.license_keys.values())
         
-        stats_text = f"""📊 **إحصائيات سريعة**
+          stats_text = f"""📊 **إحصائيات سريعة**
 
 👥 **المستخدمين:**
 • الإجمالي: {total_users}
