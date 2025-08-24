@@ -6,7 +6,6 @@ Gold Nightmare Bot - Complete Advanced Analysis & Risk Management System
 Version: 6.0 Professional Enhanced Edition
 Author: Adi - Gold Nightmare School
 """
-
 import logging
 import logging.handlers
 import asyncio
@@ -27,6 +26,7 @@ import pytz
 from functools import wraps
 import pickle
 import aiofiles
+import os
 from flask import Flask
 
 # Telegram imports
@@ -90,8 +90,8 @@ class Config:
     # Timezone
     TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Asia/Amman"))
     
-    # Secret Analysis Trigger (Hidden from users)
-    NIGHTMARE_TRIGGER = "كابوس الذهب"
+    # Special Analysis Trigger
+    NIGHTMARE_TRIGGER = "كابو"
 
 # ==================== Logging Setup ====================
 def setup_logging():
@@ -675,7 +675,7 @@ class ClaudeAIManager:
                           user_settings: Dict[str, Any] = None) -> str:
         """تحليل الذهب مع Claude المحسن"""
         
-        # التحقق من التحليل الخاص السري (بدون إظهار للمستخدم)
+        # التحقق من التحليل الخاص "كابو"
         is_nightmare_analysis = Config.NIGHTMARE_TRIGGER in prompt
         
         if is_nightmare_analysis:
@@ -914,8 +914,8 @@ class ClaudeAIManager:
         elif analysis_type == AnalysisType.NIGHTMARE:
             base_prompt += f"""
 
-🔥🔥🔥 **التحليل الشامل المتقدم** 🔥🔥🔥
-هذا التحليل المتقدم يشمل جميع الجوانب التالية:
+🔥🔥🔥 **التحليل الخاص - كابوس الذهب** 🔥🔥🔥
+هذا التحليل المتقدم مخصص للمحترفين فقط ويشمل:
 
 ╔════════════════════════════════════════════════════════════════════╗
 ║                    🎯 **التحليل الشامل المطلوب**                    ║
@@ -1170,7 +1170,7 @@ class ClaudeAIManager:
 """
         
         if analysis_type == AnalysisType.NIGHTMARE:
-            context += f"""🔥 **التحليل الشامل المطلوب:**
+            context += f"""🔥 **التحليل الخاص المطلوب:**
 
 المطلوب تحليل شامل ومفصل يشمل جميع النقاط التالية بتنسيق جميل:
 
@@ -1335,31 +1335,23 @@ def create_main_keyboard(user: User) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("👨‍💼 لوحة الإدارة", callback_data="admin_panel")
             ])
         
-        # إضافة زر التحليل الشامل المتقدم
+        # إضافة زر التحليل الخاص في الأسفل
         keyboard.append([
-            InlineKeyboardButton(f"🔥 التحليل الشامل المتقدم 🔥", callback_data="nightmare_analysis")
+            InlineKeyboardButton(f"🔥 التحليل الخاص الشامل 🔥", callback_data="nightmare_analysis")
         ])
     
     return InlineKeyboardMarkup(keyboard)
 
 def create_admin_keyboard() -> InlineKeyboardMarkup:
-    """لوحة الإدارة المحسنة"""
+    """لوحة الإدارة"""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 إحصائيات عامة", callback_data="admin_stats"),
             InlineKeyboardButton("🔑 إدارة المفاتيح", callback_data="admin_keys")
         ],
         [
-            InlineKeyboardButton("👥 إدارة المستخدمين", callback_data="admin_users"),
+            InlineKeyboardButton("👥 المستخدمين", callback_data="admin_users"),
             InlineKeyboardButton("📈 تقارير التحليل", callback_data="admin_analyses")
-        ],
-        [
-            InlineKeyboardButton("💾 نسخة احتياطية", callback_data="create_backup"),
-            InlineKeyboardButton("📝 سجل الأخطاء", callback_data="view_logs")
-        ],
-        [
-            InlineKeyboardButton("⚙️ إعدادات النظام", callback_data="system_settings"),
-            InlineKeyboardButton("🔄 إعادة تشغيل", callback_data="restart_bot")
         ],
         [
             InlineKeyboardButton("🔙 رجوع", callback_data="back_main")
@@ -1491,6 +1483,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 │  🔄 يتجدد العداد كل 24 ساعة بالضبط    │
 └─────────────────────────────────────┘
 
+🎭 **للحصول على التحليل الخاص الشامل:**
+اكتب: **"{Config.NIGHTMARE_TRIGGER}"** في أي رسالة
+
 🎯 **اختر نوع التحليل المطلوب:**"""
 
         await update.message.reply_text(
@@ -1518,7 +1513,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 │ 🎯 **نقاط دخول وخروج** بالسنت الواحد          │
 │ 🛡️ **إدارة مخاطر احترافية** مؤسسية           │
 │ 📈 **توقعات مستقبلية** مع نسب ثقة دقيقة        │
-│ 🔥 **تحليل شامل متقدم** للمحترفين              │
+│ 🔥 **التحليل الخاص الشامل**: "{Config.NIGHTMARE_TRIGGER}"    │
 │                                               │
 └───────────────────────────────────────────────┘
 
@@ -1527,7 +1522,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔑 كل مفتاح يعطيك:
    ⚡ 3 تحليلات احترافية يومياً
    🔄 تجديد تلقائي كل 24 ساعة
-   🎯 وصول للتحليل الشامل المتقدم
+   🎯 وصول للتحليل الخاص الشامل
    📱 دعم فني مباشر
 
 💡 **للحصول على مفتاح التفعيل:**
@@ -1592,7 +1587,9 @@ async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📈 المتبقي اليوم: {key_info['remaining_today']} رسائل
 ⏰ يتجدد العداد كل 24 ساعة تلقائياً بالضبط
 
-🎉 يمكنك الآن استخدام البوت والحصول على التحليلات المتقدمة!"""
+🔥 **كابوس الذهب** "{Config.NIGHTMARE_TRIGGER}"
+
+🎉 يمكنك الآن استخدام البوت!"""
     
     await update.message.reply_text(
         success_message,
@@ -1648,7 +1645,8 @@ async def create_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 💡 تعليمات للمستخدمين:
 • كل مفتاح يعطي {daily_limit} رسائل فقط يومياً
-• استخدام: /license GOLD-XXXX-XXXX-XXXX"""
+• استخدام: /license GOLD-XXXX-XXXX-XXXX
+• للتحليل الخاص: "{Config.NIGHTMARE_TRIGGER}\""""
     
     await status_msg.edit_text(result_message)
 
@@ -1729,6 +1727,7 @@ GOLD-XXXX-XXXX-XXXX
 ⚠️ ملاحظات مهمة:
 • لديك 3 رسائل فقط يومياً
 • يتجدد العداد كل 24 ساعة بالضبط
+• للتحليل الخاص اكتب: {Config.NIGHTMARE_TRIGGER}
 ```"""
     
     await send_long_message(update, message)
@@ -1751,102 +1750,6 @@ async def delete_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await update.message.reply_text(message)
 
-@admin_only
-async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إنشاء نسخة احتياطية"""
-    try:
-        db_manager = context.bot_data['db']
-        license_manager = context.bot_data['license_manager']
-        
-        # إنشاء النسخة الاحتياطية
-        backup_data = {
-            'timestamp': datetime.now().isoformat(),
-            'users': {str(k): {
-                'user_id': v.user_id,
-                'username': v.username,
-                'first_name': v.first_name,
-                'is_activated': v.is_activated,
-                'activation_date': v.activation_date.isoformat() if v.activation_date else None,
-                'total_requests': v.total_requests,
-                'total_analyses': v.total_analyses,
-                'license_key': v.license_key
-            } for k, v in db_manager.users.items()},
-            'license_keys': {k: {
-                'key': v.key,
-                'created_date': v.created_date.isoformat(),
-                'daily_limit': v.daily_limit,
-                'used_today': v.used_today,
-                'total_uses': v.total_uses,
-                'user_id': v.user_id,
-                'username': v.username,
-                'is_active': v.is_active
-            } for k, v in license_manager.license_keys.items()},
-            'analyses_count': len(db_manager.analyses)
-        }
-        
-        # حفظ في ملف
-        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        async with aiofiles.open(backup_filename, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(backup_data, ensure_ascii=False, indent=2))
-        
-        await update.message.reply_text(
-            f"✅ **تم إنشاء النسخة الاحتياطية**\n\n"
-            f"📁 الملف: `{backup_filename}`\n"
-            f"👥 المستخدمين: {len(backup_data['users'])}\n"
-            f"🔑 المفاتيح: {len(backup_data['license_keys'])}\n"
-            f"📈 التحليلات: {backup_data['analyses_count']}"
-        )
-        
-    except Exception as e:
-        logger.error(f"Backup error: {e}")
-        await update.message.reply_text(f"❌ خطأ في إنشاء النسخة الاحتياطية: {str(e)}")
-
-@admin_only 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إحصائيات سريعة للأدمن"""
-    try:
-        db_manager = context.bot_data['db']
-        license_manager = context.bot_data['license_manager']
-        
-        # إحصائيات أساسية
-        total_users = len(db_manager.users)
-        active_users = len([u for u in db_manager.users.values() if u.is_activated])
-        total_keys = len(license_manager.license_keys)
-        used_keys = len([k for k in license_manager.license_keys.values() if k.user_id])
-        
-        # آخر 24 ساعة
-        last_24h = datetime.now() - timedelta(hours=24)
-        recent_analyses = [a for a in db_manager.analyses if a.timestamp > last_24h]
-        nightmare_analyses = [a for a in recent_analyses if a.analysis_type == "NIGHTMARE"]
-        
-        # استخدام اليوم
-        today_usage = sum(k.used_today for k in license_manager.license_keys.values())
-        
-        stats_text = f"""📊 **إحصائيات سريعة**
-
-👥 **المستخدمين:**
-• الإجمالي: {total_users}
-• المفعلين: {active_users}
-• النسبة: {active_users/total_users*100:.1f}%
-
-🔑 **المفاتيح:**
-• الإجمالي: {total_keys}
-• المستخدمة: {used_keys}
-• المتاحة: {total_keys - used_keys}
-
-📈 **آخر 24 ساعة:**
-• التحليلات: {len(recent_analyses)}
-• التحليلات الخاصة: {len(nightmare_analyses)}
-• الرسائل المستخدمة اليوم: {today_usage}
-
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
-
-        await update.message.reply_text(stats_text)
-        
-    except Exception as e:
-        logger.error(f"Stats error: {e}")
-        await update.message.reply_text(f"❌ خطأ في الإحصائيات: {str(e)}")
-
 # ==================== Message Handlers ====================
 @require_activation_with_key_usage("text_analysis")
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1861,16 +1764,15 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
-    # فحص التحليل السري (بدون إظهار للمستخدم)
+    # التحليل الخاص "كابو"
     is_nightmare = Config.NIGHTMARE_TRIGGER in update.message.text
     
     if is_nightmare:
         processing_msg = await update.message.reply_text(
-            "🔥🔥🔥 تحضير التحليل الشامل المتقدم 🔥🔥🔥\n\n"
-            "⚡ جمع البيانات من جميع الأطر الزمنية...\n"
-            "📊 تحليل المستويات والنماذج الفنية...\n"
-            "🎯 حساب نقاط الدخول والخروج الدقيقة...\n\n"
-            "⏳ التحليل الشامل يحتاج وقت أطول للدقة القصوى..."
+            "🔥🔥🔥 كابوس الذهب 🔥🔥🔥\n\n"
+            "⚡ تحضير التحليل المتقدم الشامل...\n"
+            "📊 جمع البيانات من جميع الأطر الزمنية...\n"
+            "🎯 حساب نقاط الدخول والخروج الدقيقة..."
         )
     else:
         processing_msg = await update.message.reply_text("🧠 جاري التحليل الاحترافي...")
@@ -1945,13 +1847,13 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
     
-    # فحص إذا كان التحليل السري في التعليق
+    # فحص إذا كان التحليل الخاص في التعليق
     caption = update.message.caption or ""
     is_nightmare = Config.NIGHTMARE_TRIGGER in caption
     
     if is_nightmare:
         processing_msg = await update.message.reply_text(
-            "🔥🔥🔥 تحليل شارت شامل متقدم 🔥🔥🔥\n\n"
+            "🔥🔥🔥 تحليل شارت - كابوس الذهب 🔥🔥🔥\n\n"
             "📸 معالجة الصورة بالذكاء الاصطناعي المتقدم...\n"
             "🔍 تحليل النماذج الفنية والمستويات..."
         )
@@ -2015,6 +1917,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("❌ حدث خطأ أثناء تحليل الصورة.")
 
 # ==================== Enhanced Handler Functions ====================
+
 async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج التحليل التجريبي للمستخدمين غير المفعلين"""
     query = update.callback_query
@@ -2032,7 +1935,7 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
             "💎 **مع المفتاح ستحصل على:**\n"
             "• 3 تحليلات احترافية يومياً\n"
             "• تجديد تلقائي كل 24 ساعة\n"
-            "• التحليل الشامل المتقدم\n"
+            f"• التحليل الخاص الشامل: '{Config.NIGHTMARE_TRIGGER}'\n"
             "• دعم فني مباشر\n\n"
             "👨‍💼 **تواصل مع المطور:** @Odai_xau",
             reply_markup=InlineKeyboardMarkup([
@@ -2091,7 +1994,7 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
 🔮 توقعات ذكية مع احتماليات
 📰 تحليل تأثير الأخبار
 🔄 اكتشاف نقاط الانعكاس
-🔥 التحليل الشامل المتقدم للمحترفين
+🔥 التحليل الخاص الشامل: "{Config.NIGHTMARE_TRIGGER}"
 
 📊 **المتبقي من المحاولات التجريبية:** {remaining_demos - 1} من 3
 
@@ -2122,7 +2025,7 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج التحليل الشامل المتقدم"""
+    """معالج التحليل الخاص الشامل"""
     query = update.callback_query
     user = context.user_data.get('user')
     
@@ -2145,7 +2048,7 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
     
     # رسالة تحضير خاصة للتحليل الشامل
     await query.edit_message_text(
-        "🔥🔥🔥 **التحليل الشامل المتقدم** 🔥🔥🔥\n\n"
+        "🔥🔥🔥 **كابوس الذهب - التحليل الخاص** 🔥🔥🔥\n\n"
         "⚡ تحضير التحليل الشامل المتقدم...\n"
         "🔬 تحليل جميع الأطر الزمنية...\n"
         "📊 حساب مستويات الدعم والمقاومة...\n"
@@ -2161,8 +2064,8 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
             await query.edit_message_text("❌ لا يمكن الحصول على السعر حالياً.")
             return
         
-        # التحليل الشامل المتقدم
-        nightmare_prompt = f"""أريد التحليل الشامل المتقدم للذهب - التحليل الأكثر تقدماً وتفصيلاً مع:
+        # التحليل الخاص الشامل
+        nightmare_prompt = f"""أريد التحليل الخاص الشامل للذهب "كابوس الذهب" - التحليل الأكثر تقدماً وتفصيلاً مع:
 
         1. تحليل شامل لجميع الأطر الزمنية (M5, M15, H1, H4, D1) مع نسب ثقة دقيقة
         2. مستويات دعم ومقاومة متعددة مع قوة كل مستوى
@@ -2175,7 +2078,7 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
         9. إدارة مخاطر تفصيلية
         10. جداول منظمة وتنسيق احترافي
 
-        {Config.NIGHTMARE_TRIGGER}
+        "{Config.NIGHTMARE_TRIGGER}"
         
         اجعله التحليل الأقوى والأشمل على الإطلاق!"""
         
@@ -2191,7 +2094,7 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔥 **تم بواسطة Gold Nightmare Academy** 🔥
-💎 **التحليل الشامل المتقدم - للمحترفين فقط**
+💎 **التحليل الخاص الشامل - للمحترفين فقط**
 ⚡ **تحليل متقدم بالذكاء الاصطناعي Claude 4**
 🎯 **دقة التحليل: 95%+ - مضمون الجودة**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2203,7 +2106,7 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
         
     except Exception as e:
         logger.error(f"Error in nightmare analysis: {e}")
-        await query.edit_message_text("❌ حدث خطأ في التحليل الشامل.")
+        await query.edit_message_text("❌ حدث خطأ في التحليل الخاص.")
 
 async def handle_enhanced_price_display(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالج عرض السعر المحسن"""
@@ -2242,7 +2145,7 @@ async def handle_enhanced_price_display(update: Update, context: ContextTypes.DE
 🔻 **أدنى سعر:** ${price.low_24h:.2f}
 ⏰ **التحديث:** {price.timestamp.strftime('%H:%M:%S')}
 
-💡 **للحصول على تحليل متقدم استخدم الأزرار أدناه**"""
+🔥 **اكتب "{Config.NIGHTMARE_TRIGGER}" للحصول على التحليل الخاص الشامل!**"""
         
         # أزرار تفاعلية للسعر
         price_keyboard = [
@@ -2301,6 +2204,8 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
 📉 **المتبقي:** {key_info['remaining_today']} رسائل
 🔢 **إجمالي الاستخدام:** {key_info['total_uses']} رسالة
 
+🔥 **التحليل الخاص:** "{Config.NIGHTMARE_TRIGGER}"
+
 💎 **Gold Nightmare Academy - عضوية نشطة**
 🚀 **أنت جزء من مجتمع النخبة في تحليل الذهب!**"""
         
@@ -2356,7 +2261,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 💡 للحصول على مفتاح تواصل مع:
 👨‍💼 Odai - @Odai_xau
 
-🔥 مع كل مفتاح ستحصل على تحليلات متقدمة احترافية!"""
+🔥 مع كل مفتاح ستحصل على التحليل الخاص:
+"{Config.NIGHTMARE_TRIGGER}" """
         
         await query.edit_message_text(
             not_activated_message,
@@ -2415,7 +2321,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 - 🔍 اكتشاف النماذج الفنية
 - 🎯 نقاط دخول وخروج دقيقة
 - 🛡️ إدارة مخاطر احترافية
-- 🔥 التحليل الشامل المتقدم
+- 🔥 التحليل الخاص: "{Config.NIGHTMARE_TRIGGER}"
 
 💰 سعر خاص ومحدود!
 🔄 تجديد تلقائي كل 24 ساعة بالضبط
@@ -2438,6 +2344,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                         
         elif data == "back_main":
             main_message = f"""🏆 Gold Nightmare Bot
+
+🔥 للتحليل الخاص: "{Config.NIGHTMARE_TRIGGER}"
 
 اختر الخدمة المطلوبة:"""
             
@@ -2518,6 +2426,221 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=create_admin_keyboard()
             )
         
+        elif data == "admin_stats" and user_id == Config.MASTER_USER_ID:
+            try:
+                db_stats = await context.bot_data['db'].get_stats()
+                license_stats = await context.bot_data['license_manager'].get_all_keys_stats()
+                
+                stats_text = f"""📊 **إحصائيات النظام الشاملة**
+
+🔑 **إحصائيات المفاتيح:**
+• إجمالي المفاتيح: {license_stats['total_keys']}
+• المفاتيح النشطة: {license_stats['active_keys']}
+• المفاتيح المستخدمة: {license_stats['used_keys']}
+• المفاتيح المتاحة: {license_stats['unused_keys']}
+• الاستخدام اليوم: {license_stats['today_usage']} رسالة
+• الاستخدام الإجمالي: {license_stats['total_usage']} رسالة
+
+👥 **إحصائيات المستخدمين:**
+• إجمالي المستخدمين: {db_stats['total_users']}
+• المستخدمين النشطين: {db_stats['active_users']}
+• معدل التفعيل: {db_stats['activation_rate']}
+
+📈 **إحصائيات التحليل:**
+• إجمالي التحليلات: {db_stats['total_analyses']}
+• التحليلات خلال 24 ساعة: {db_stats['analyses_24h']}
+
+🔥 **الكلمة السحرية:** "{Config.NIGHTMARE_TRIGGER}"
+
+⏰ **آخر تحديث:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+                keyboard = [[InlineKeyboardButton("🔙 رجوع للإدارة", callback_data="admin_panel")]]
+                await query.edit_message_text(
+                    stats_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except Exception as e:
+                logger.error(f"Error in admin_stats: {e}")
+                await query.edit_message_text(
+                    f"❌ خطأ في تحميل الإحصائيات: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]])
+                )
+        
+        elif data == "admin_keys" and user_id == Config.MASTER_USER_ID:
+            await query.edit_message_text(
+                "🔑 **إدارة مفاتيح التفعيل**\n\nاختر العملية المطلوبة:",
+                reply_markup=create_keys_management_keyboard()
+            )
+        
+        elif data == "admin_users" and user_id == Config.MASTER_USER_ID:
+            db_manager = context.bot_data['db']
+            license_manager = context.bot_data['license_manager']
+            
+            # المستخدمين النشطين
+            active_users = [u for u in db_manager.users.values() if u.is_activated]
+            recent_users = sorted(active_users, key=lambda x: x.last_activity, reverse=True)[:5]
+            
+            message = f"""👥 **إدارة المستخدمين**
+
+📊 **إحصائيات عامة:**
+• إجمالي المستخدمين: {len(db_manager.users)}
+• المستخدمين النشطين: {len(active_users)}
+
+👤 **أحدث المستخدمين النشطين:**"""
+
+            for i, user in enumerate(recent_users, 1):
+                # البحث عن معلومات المفتاح
+                user_key_info = None
+                for key, license_key in license_manager.license_keys.items():
+                    if license_key.user_id == user.user_id:
+                        user_key_info = license_key
+                        break
+                
+                remaining = user_key_info.daily_limit - user_key_info.used_today if user_key_info else 0
+                
+                message += f"\n{i}. **{user.first_name}** (@{user.username or 'N/A'})"
+                message += f"\n   ID: {user.user_id} | طلبات: {user.total_requests}"
+                message += f"\n   متبقي اليوم: {remaining} رسائل"
+                message += f"\n   آخر نشاط: {user.last_activity.strftime('%Y-%m-%d %H:%M')}"
+            
+            keyboard = [[InlineKeyboardButton("🔙 رجوع للإدارة", callback_data="admin_panel")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif data == "keys_show_all" and user_id == Config.MASTER_USER_ID:
+            license_manager = context.bot_data['license_manager']
+            
+            if not license_manager.license_keys:
+                message = "❌ لا توجد مفاتيح"
+            else:
+                message = f"🔑 **جميع المفاتيح ({len(license_manager.license_keys)} مفتاح):**\n\n"
+                
+                count = 0
+                for key, license_key in license_manager.license_keys.items():
+                    if count >= 15:  # عرض أول 15 فقط
+                        break
+                    count += 1
+                    
+                    status = "🟢" if license_key.is_active else "🔴"
+                    user_status = f"{license_key.username or 'N/A'}" if license_key.user_id else "متاح"
+                    usage = f"{license_key.used_today}/{license_key.daily_limit}"
+                    
+                    message += f"{count}. `{key[:12]}***`\n"
+                    message += f"   {status} {user_status} | {usage}\n\n"
+                
+                if len(license_manager.license_keys) > 15:
+                    message += f"... و {len(license_manager.license_keys) - 15} مفاتيح أخرى\n\n"
+                
+                message += "💡 استخدم `/keys` للقائمة الكاملة"
+            
+            keyboard = [[InlineKeyboardButton("🔙 رجوع لإدارة المفاتيح", callback_data="admin_keys")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif data == "keys_show_unused" and user_id == Config.MASTER_USER_ID:
+            license_manager = context.bot_data['license_manager']
+            
+            unused_keys = [key for key, license_key in license_manager.license_keys.items() 
+                          if not license_key.user_id and license_key.is_active]
+            
+            if not unused_keys:
+                message = "❌ لا توجد مفاتيح متاحة"
+            else:
+                message = f"⭕ **المفاتيح المتاحة ({len(unused_keys)} مفتاح):**\n\n"
+                
+                for i, key in enumerate(unused_keys[:10], 1):  # أول 10 فقط
+                    message += f"{i}. `{key}`\n"
+                
+                if len(unused_keys) > 10:
+                    message += f"\n... و {len(unused_keys) - 10} مفاتيح أخرى\n"
+                
+                message += "\n💡 استخدم `/unusedkeys` للقائمة الكاملة"
+            
+            keyboard = [[InlineKeyboardButton("🔙 رجوع لإدارة المفاتيح", callback_data="admin_keys")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif data == "keys_create_prompt" and user_id == Config.MASTER_USER_ID:
+            message = """➕ **إنشاء مفاتيح جديدة**
+
+استخدم الأوامر التالية:
+
+🔹 `/createkeys 5` - إنشاء 5 مفاتيح (3 رسائل/يوم)
+🔹 `/createkeys 10 5` - إنشاء 10 مفاتيح (5 رسائل/يوم)
+🔹 `/createkeys 1 10` - إنشاء مفتاح واحد (10 رسائل/يوم)
+
+⚠️ **ملاحظات:**
+• الحد الأقصى: 50 مفتاح في المرة الواحدة
+• الافتراضي: 3 رسائل يومياً لكل مفتاح
+• يتم التجديد تلقائياً كل 24 ساعة بالضبط"""
+
+            keyboard = [[InlineKeyboardButton("🔙 رجوع لإدارة المفاتيح", callback_data="admin_keys")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif data == "keys_stats" and user_id == Config.MASTER_USER_ID:
+            license_manager = context.bot_data['license_manager']
+            
+            stats = await license_manager.get_all_keys_stats()
+            
+            # أكثر المفاتيح استخداماً
+            top_keys = sorted(license_manager.license_keys.items(), 
+                             key=lambda x: x[1].total_uses, reverse=True)[:5]
+            
+            message = f"""📊 **إحصائيات مفصلة للمفاتيح**
+
+🔢 **الأرقام العامة:**
+• إجمالي المفاتيح: {stats['total_keys']}
+• المفاتيح النشطة: {stats['active_keys']}
+• المفاتيح المستخدمة: {stats['used_keys']}
+• المفاتيح المتاحة: {stats['unused_keys']}
+
+📈 **الاستخدام:**
+• استخدام اليوم: {stats['today_usage']} رسالة
+• الاستخدام الإجمالي: {stats['total_usage']} رسالة
+• متوسط الاستخدام: {stats['avg_usage_per_key']:.1f} رسالة/مفتاح
+
+🏆 **أكثر المفاتيح استخداماً:**"""
+
+            for i, (key, license_key) in enumerate(top_keys, 1):
+                username = license_key.username or "غير محدد"
+                message += f"\n{i}. {username} - {license_key.total_uses} استخدام"
+            
+            keyboard = [[InlineKeyboardButton("🔙 رجوع لإدارة المفاتيح", callback_data="admin_keys")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        elif data == "keys_delete_user" and user_id == Config.MASTER_USER_ID:
+            message = """🗑️ **حذف مستخدم من مفتاح**
+
+استخدم الأمر التالي:
+
+📝 `/deleteuser مفتاح_التفعيل`
+
+مثال: `/deleteuser GOLD-ABC1-DEF2-GHI3`
+
+⚠️ **تأثير الحذف:**
+• سيتم إلغاء ربط المستخدم بالمفتاح
+• سيتم إعادة تعيين استخدام المفتاح إلى صفر
+• سيصبح المفتاح متاحاً لمستخدم جديد
+• لن يتمكن المستخدم المحذوف من استخدام البوت"""
+
+            keyboard = [[InlineKeyboardButton("🔙 رجوع لإدارة المفاتيح", callback_data="admin_keys")]]
+            await query.edit_message_text(
+                message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
         else:
             await query.edit_message_text(
                 "❌ خيار غير معروف. استخدم /start للعودة للقائمة الرئيسية."
@@ -2528,62 +2651,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(
             "❌ حدث خطأ تقني.\n\nاستخدم /start للمتابعة."
         )
-
-# ==================== Admin Message Handler ====================
-async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج رسائل الأدمن للعمليات الخاصة"""
-    user_id = update.effective_user.id
-    
-    # فقط للمشرف
-    if user_id != Config.MASTER_USER_ID:
-        return
-    
-    admin_action = context.user_data.get('admin_action')
-    
-    if admin_action == 'broadcast':
-        # إرسال رسالة جماعية
-        broadcast_text = update.message.text
-        
-        if broadcast_text.lower() == '/cancel':
-            context.user_data.pop('admin_action', None)
-            await update.message.reply_text("❌ تم إلغاء الرسالة الجماعية.")
-            return
-        
-        db_manager = context.bot_data['db']
-        active_users = [u for u in db_manager.users.values() if u.is_activated]
-        
-        status_msg = await update.message.reply_text(f"📤 جاري الإرسال لـ {len(active_users)} مستخدم...")
-        
-        success_count = 0
-        failed_count = 0
-        
-        broadcast_message = f"""📢 **رسالة من إدارة Gold Nightmare**
-
-{broadcast_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 Gold Nightmare Academy"""
-        
-        for user in active_users:
-            try:
-                await context.bot.send_message(
-                    chat_id=user.user_id,
-                    text=broadcast_message
-                )
-                success_count += 1
-                await asyncio.sleep(0.1)  # تجنب spam limits
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to send broadcast to {user.user_id}: {e}")
-        
-        await status_msg.edit_text(
-            f"✅ **اكتملت الرسالة الجماعية**\n\n"
-            f"📤 تم الإرسال لـ: {success_count} مستخدم\n"
-            f"❌ فشل الإرسال لـ: {failed_count} مستخدم\n\n"
-            f"📊 معدل النجاح: {success_count/(success_count+failed_count)*100:.1f}%"
-        )
-        
-        context.user_data.pop('admin_action', None)
 
 # ==================== Error Handler ====================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2640,7 +2707,7 @@ async def main():
         return
     
     print("🚀 بدء تشغيل Gold Nightmare Bot...")
-    print("🔥 بوت التحليل المتقدم للذهب جاهز للعمل!")
+    print(f"🔥 الكلمة السحرية للتحليل الخاص: '{Config.NIGHTMARE_TRIGGER}'")
     
     # تنظيف البوت من أي webhook سابق
     await cleanup_telegram_bot()
@@ -2679,11 +2746,8 @@ async def main():
     application.add_handler(CommandHandler("keys", keys_command))
     application.add_handler(CommandHandler("unusedkeys", unused_keys_command))
     application.add_handler(CommandHandler("deleteuser", delete_user_command))
-    application.add_handler(CommandHandler("backup", backup_command))
-    application.add_handler(CommandHandler("stats", stats_command))
     
     # معالجات الرسائل
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(Config.MASTER_USER_ID), handle_admin_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))
     
@@ -2871,21 +2935,14 @@ if __name__ == "__main__":
 ║  • 40 مفتاح تفعيل أولي (3 رسائل/يوم)                       ║
 ║  • تجديد دقيق كل 24 ساعة بالضبط                            ║
 ║  • أزرار تفاعلية للمفعلين فقط                               ║
-║  • لوحة إدارة شاملة ومتطورة                                 ║
-║  • تحليل شامل متقدم سري للمحترفين                          ║
+║  • لوحة إدارة شاملة للمشرف                                  ║
+║  • تحليل خاص بكلمة "{Config.NIGHTMARE_TRIGGER}"                            ║
 ║  • إدارة متقدمة للمستخدمين والمفاتيح                        ║
 ║  • تنسيقات جميلة وتحليلات احترافية                          ║
 ║  • تحليل بـ 8000 توكن للدقة القصوى                         ║
-║  • نظام إحصائيات ومراقبة متقدم                             ║
-║  • رسائل جماعية ونسخ احتياطية                              ║
+║  • حل مشاكل الـ Telegram Conflicts                          ║
 ║                                                              ║
-║  👨‍💼 أوامر الإدارة:                                          ║
-║  /stats - إحصائيات سريعة                                   ║
-║  /backup - نسخة احتياطية                                   ║
-║  /keys - عرض كل المفاتيح                                    ║
-║  /unusedkeys - المفاتيح المتاحة                              ║
-║  /createkeys [عدد] [حد] - إنشاء مفاتيح                      ║
-║  /deleteuser [مفتاح] - حذف مستخدم                          ║
+║  🔑 الكلمة السحرية: {Config.NIGHTMARE_TRIGGER}                            ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
