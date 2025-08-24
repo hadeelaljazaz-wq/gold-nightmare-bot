@@ -1613,13 +1613,19 @@ async def main():
     logger.info(f"🌐 Server running on port {Config.PORT}")
     logger.info("🤖 Bot is ready to receive webhooks...")
     
-    # تشغيل Flask server
-    try:
-        flask_app.run(
-            host='0.0.0.0',
-            port=Config.PORT,
-            debug=False
-        )
+    # تشغيل Flask serverimport threading
+
+def run_flask():
+    flask_app.run(
+        host="0.0.0.0",
+        port=Config.PORT,
+        debug=False,
+        use_reloader=False
+    )
+
+# تشغيل Flask في ثريد منفصل
+threading.Thread(target=run_flask, daemon=True).start()
+
     except Exception as e:
         logger.error(f"❌ Server error: {e}")
     finally:
