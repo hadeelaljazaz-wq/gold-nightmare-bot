@@ -13,3 +13,5 @@ scipy
 # For async Flask
 nest-asyncio==1.5.8
 asgiref==3.7.2
+psycopg2-binary==2.9.7
+asyncpg==0.28.0
