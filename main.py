@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 """
-Gold Nightmare Bot - Webhook Version with Message-Based License System
-بوت تحليل الذهب الاحترافي - نسخة Webhook مع نظام المفاتيح بالرسائل
-Version: 7.0 Professional Webhook Edition
+Gold Nightmare Bot - Complete Advanced Analysis & Risk Management System
+بوت تحليل الذهب الاحترافي مع نظام مفاتيح التفعيل المتقدم
+Version: 6.0 Professional Enhanced - Render Webhook Edition
 Author: Adi - Gold Nightmare School
 """
 
@@ -16,19 +16,17 @@ import json
 import aiohttp
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date, timezone
 from collections import defaultdict
 from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import os
-from dotenv import load_dotenv
+from dotenv import loaddotenv
 import pytz
 from functools import wraps
 import pickle
 import aiofiles
-from flask import Flask, request, jsonify
-import threading
 
 # Telegram imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -43,132 +41,169 @@ import anthropic
 from PIL import Image
 import numpy as np
 
+# Optional Technical Analysis (graceful fallback if not installed)
+try:
+    import talib
+    import yfinance as yf
+    from scipy import stats
+    ADVANCEDANALYSISAVAILABLE = True
+except ImportError:
+    ADVANCEDANALYSISAVAILABLE = False
+    print("⚠️ Advanced analysis libraries not found. Basic analysis will be used.")
+
 # Load environment variables
-load_dotenv()
+loaddotenv()
 
 # ==================== Configuration ====================
 class Config:
     # Telegram Configuration
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    MASTER_USER_ID = int(os.getenv("MASTER_USER_ID", "590918137"))
-    
-    # Webhook Configuration for Render
-    RENDER_APP_URL = os.getenv("RENDER_EXTERNAL_URL", "")
-    WEBHOOK_PATH = "/webhook"
-    PORT = int(os.getenv("PORT", "8080"))
+    TELEGRAMBOTTOKEN = os.getenv("TELEGRAMBOTTOKEN")
+    WEBHOOKURL = os.getenv("WEBHOOKURL")  # For Render webhook
+    MASTERUSERID = int(os.getenv("MASTERUSERID", "590918137"))
     
     # Claude Configuration
-    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-    CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
-    CLAUDE_MAX_TOKENS = 4000
-    CLAUDE_TEMPERATURE = float(os.getenv("CLAUDE_TEMPERATURE", "0.3"))
+    CLAUDEAPIKEY = os.getenv("CLAUDEAPIKEY")
+    CLAUDEMODEL = os.getenv("CLAUDEMODEL", "claude-3-5-sonnet-20241022")
+    CLAUDEMAXTOKENS = 8000
+    CLAUDETEMPERATURE = float(os.getenv("CLAUDETEMPERATURE", "0.3"))
     
     # Gold API Configuration
-    GOLD_API_TOKEN = os.getenv("GOLD_API_TOKEN")
-    GOLD_API_URL = "https://www.goldapi.io/api/XAU/USD"
+    GOLDAPITOKEN = os.getenv("GOLDAPITOKEN")
+    GOLDAPIURL = "https://www.goldapi.io/api/XAU/USD"
     
     # Rate Limiting
-    RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
-    RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+    RATELIMITREQUESTS = int(os.getenv("RATELIMITREQUESTS", "30"))
+    RATELIMITWINDOW = int(os.getenv("RATELIMITWINDOW", "60"))
     
     # Cache Configuration
-    PRICE_CACHE_TTL = int(os.getenv("PRICE_CACHE_TTL", "60"))
-    ANALYSIS_CACHE_TTL = int(os.getenv("ANALYSIS_CACHE_TTL", "300"))
+    PRICECACHETTL = int(os.getenv("PRICECACHETTL", "60"))
+    ANALYSISCACHETTL = int(os.getenv("ANALYSISCACHETTL", "300"))
     
     # Image Processing
-    MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))
-    MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "1568"))
+    MAXIMAGESIZE = int(os.getenv("MAXIMAGESIZE", "10485760"))
+    MAXIMAGEDIMENSION = int(os.getenv("MAXIMAGEDIMENSION", "1568"))
     
     # Database
-    DB_PATH = os.getenv("DB_PATH", "gold_bot_data.db")
-    KEYS_FILE = os.getenv("KEYS_FILE", "license_keys.json")
+    DBPATH = os.getenv("DBPATH", "goldbotdata.db")
+    KEYSFILE = os.getenv("KEYSFILE", "licensekeys.json")
     
     # Timezone
     TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Asia/Amman"))
     
-    # Special Analysis Trigger
-    NIGHTMARE_TRIGGER = "كابو"
-    
-    # Default messages per key
-    DEFAULT_MESSAGES_PER_KEY = 100
+    # Secret Analysis Trigger (Hidden from users)
+    NIGHTMARETRIGGER = "كابوس الذهب"
 
 # ==================== Logging Setup ====================
-def setup_logging():
+def setuplogging():
     """Configure advanced logging"""
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     
     # Remove existing handlers
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
     
     # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    consolehandler = logging.StreamHandler()
+    consolehandler.setLevel(logging.INFO)
     
-    # Simple formatter for Render
-    formatter = logging.Formatter(
+    # File handler
+    os.makedirs('logs', existok=True)
+    filehandler = logging.handlers.RotatingFileHandler(
+        'logs/goldbot.log',
+        maxBytes=1010241024,
+        backupCount=10,
+        encoding='utf-8'
+    )
+    filehandler.setLevel(logging.DEBUG)
+    
+    # Formatters
+    detailedformatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    simpleformatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%H:%M:%S'
     )
     
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    consolehandler.setFormatter(simpleformatter)
+    filehandler.setFormatter(detailedformatter)
+    
+    logger.addHandler(consolehandler)
+    logger.addHandler(filehandler)
     
     return logger
 
-logger = setup_logging()
+logger = setuplogging()
+# ==================== Markdown Text Cleaner ====================
+def cleanmarkdowntext(text: str) -> str:
+    """تنظيف النص من markdown المُشكِل"""
+    if not text:
+        return text
+    
+    # استبدال الرموز المُشكِلة
+    text = text.replace('', '')  # حذف النجمتين
+    text = text.replace('', '')   # حذف النجمة الواحدة  
+    text = text.replace('', '')  # حذف الخطوط السفلية
+    text = text.replace('', '')   # حذف الخط السفلي الواحد
+    text = text.replace('`', '')   # حذف الـ backticks
+    text = text.replace('[', '(')  # استبدال الأقواس المربعة
+    text = text.replace(']', ')')
+    
+    return text
 
 # ==================== Data Models ====================
 @dataclass
 class User:
-    user_id: int
+    userid: int
     username: Optional[str]
-    first_name: str
-    is_activated: bool = False
-    activation_date: Optional[datetime] = None
-    last_activity: datetime = field(default_factory=datetime.now)
-    total_requests: int = 0
-    total_analyses: int = 0
-    subscription_tier: str = "basic"
-    settings: Dict[str, Any] = field(default_factory=dict)
-    license_keys: List[str] = field(default_factory=list)  # قائمة المفاتيح المستخدمة
+    firstname: str
+    isactivated: bool = False
+    activationdate: Optional[datetime] = None
+    lastactivity: datetime = field(defaultfactory=datetime.now)
+    totalrequests: int = 0
+    totalanalyses: int = 0
+    subscriptiontier: str = "basic"
+    settings: Dict[str, Any] = field(defaultfactory=dict)
+    licensekey: Optional[str] = None
+    dailyrequestsused: int = 0
+    lastrequestdate: Optional[date] = None
 
 @dataclass
 class GoldPrice:
     price: float
     timestamp: datetime
-    change_24h: float = 0.0
-    change_percentage: float = 0.0
-    high_24h: float = 0.0
-    low_24h: float = 0.0
+    change24h: float = 0.0
+    changepercentage: float = 0.0
+    high24h: float = 0.0
+    low24h: float = 0.0
     source: str = "goldapi"
 
 @dataclass
 class Analysis:
     id: str
-    user_id: int
+    userid: int
     timestamp: datetime
-    analysis_type: str
+    analysistype: str
     prompt: str
     result: str
-    gold_price: float
-    image_data: Optional[bytes] = None
-    indicators: Dict[str, Any] = field(default_factory=dict)
+    goldprice: float
+    imagedata: Optional[bytes] = None
+    indicators: Dict[str, Any] = field(defaultfactory=dict)
 
 @dataclass
 class LicenseKey:
     key: str
-    created_date: datetime
-    total_messages: int = 100  # عدد الرسائل الكلي
-    used_messages: int = 0      # عدد الرسائل المستخدمة
-    remaining_messages: int = 100  # عدد الرسائل المتبقية
-    is_active: bool = True
-    is_exhausted: bool = False  # هل انتهت الرسائل
-    user_id: Optional[int] = None
+    createddate: datetime
+    dailylimit: int = 3
+    usedtoday: int = 0
+    lastresetdate: date = field(defaultfactory=date.today)
+    isactive: bool = True
+    totaluses: int = 0
+    userid: Optional[int] = None
     username: Optional[str] = None
     notes: str = ""
-    activated_date: Optional[datetime] = None
 
 class AnalysisType(Enum):
     QUICK = "QUICK"
@@ -181,265 +216,280 @@ class AnalysisType(Enum):
     REVERSAL = "REVERSAL"
     NIGHTMARE = "NIGHTMARE"
 
-# ==================== License Manager (Message-Based) ====================
+# ==================== License Manager ====================
 class LicenseManager:
-    def __init__(self, keys_file: str = None):
-        self.keys_file = keys_file or Config.KEYS_FILE
-        self.license_keys: Dict[str, LicenseKey] = {}
+    def init(self, keysfile: str = None):
+        self.keysfile = keysfile or Config.KEYSFILE
+        self.licensekeys: Dict[str, LicenseKey] = {}
         
     async def initialize(self):
         """تحميل المفاتيح وإنشاء المفاتيح الأولية"""
-        await self.load_keys()
+        await self.loadkeys()
         
-        # إنشاء مفاتيح أولية إذا لم توجد
-        if len(self.license_keys) == 0:
-            logger.info("Creating initial license keys...")
-            await self.generate_initial_keys(10)  # 10 مفاتيح أولية
-            await self.save_keys()
+        if len(self.licensekeys) == 0:
+            await self.generateinitialkeys(40)
+            await self.savekeys()
+            
+        await self.resetdailyusage()
     
-    async def generate_initial_keys(self, count: int = 10):
+    async def generateinitialkeys(self, count: int = 40):
         """إنشاء المفاتيح الأولية"""
-        logger.info(f"🔑 Creating {count} initial license keys...")
+        print(f"🔑 إنشاء {count} مفتاح تفعيل...")
         
         for i in range(count):
-            key = self.generate_unique_key()
-            license_key = LicenseKey(
+            key = self.generateuniquekey()
+            licensekey = LicenseKey(
                 key=key,
-                created_date=datetime.now(),
-                total_messages=Config.DEFAULT_MESSAGES_PER_KEY,
-                remaining_messages=Config.DEFAULT_MESSAGES_PER_KEY,
+                createddate=datetime.now(),
+                dailylimit=3,
                 notes=f"مفتاح أولي رقم {i+1}"
             )
-            self.license_keys[key] = license_key
+            self.licensekeys[key] = licensekey
         
-        logger.info(f"✅ Created {count} initial keys successfully!")
-        
-        # طباعة المفاتيح للمسؤول
-        print("\n" + "="*70)
+        print(f"✅ تم إنشاء {count} مفتاح بنجاح!")
+        print("\n" + "="70)
         print("🔑 مفاتيح التفعيل المُنشأة (احفظها في مكان آمن):")
-        print("="*70)
-        for i, (key, _) in enumerate(self.license_keys.items(), 1):
+        print("="70)
+        for i, (key, ) in enumerate(self.licensekeys.items(), 1):
             print(f"{i:2d}. {key}")
-        print("="*70)
-        print(f"💡 كل مفتاح يعطي {Config.DEFAULT_MESSAGES_PER_KEY} رسالة")
-        print("="*70)
+        print("="70)
+        print("💡 كل مفتاح يعطي 3 رسائل يومياً ويتجدد تلقائياً كل 24 ساعة بالضبط")
+        print("="70)
     
-    def generate_unique_key(self) -> str:
+    def generateuniquekey(self) -> str:
         """إنشاء مفتاح فريد"""
-        chars = string.ascii_uppercase + string.digits
+        chars = string.asciiuppercase + string.digits
         
         while True:
-            key_parts = []
-            for _ in range(3):
-                part = ''.join(secrets.choice(chars) for _ in range(4))
-                key_parts.append(part)
+            keyparts = []
+            for  in range(3):
+                part = ''.join(secrets.choice(chars) for  in range(4))
+                keyparts.append(part)
             
-            key = f"GOLD-{'-'.join(key_parts)}"
+            key = f"GOLD-{'-'.join(keyparts)}"
             
-            if key not in self.license_keys:
+            if key not in self.licensekeys:
                 return key
     
-    async def create_new_key(self, total_messages: int = 100, notes: str = "") -> str:
-        """إنشاء مفتاح جديد بعدد رسائل محدد"""
-        key = self.generate_unique_key()
-        license_key = LicenseKey(
+    async def createnewkey(self, dailylimit: int = 3, notes: str = "") -> str:
+        """إنشاء مفتاح جديد"""
+        key = self.generateuniquekey()
+        licensekey = LicenseKey(
             key=key,
-            created_date=datetime.now(),
-            total_messages=total_messages,
-            remaining_messages=total_messages,
+            createddate=datetime.now(),
+            dailylimit=dailylimit,
             notes=notes
         )
-        self.license_keys[key] = license_key
-        await self.save_keys()
+        self.licensekeys[key] = licensekey
+        await self.savekeys()
         return key
     
-    async def load_keys(self):
+    async def loadkeys(self):
         """تحميل المفاتيح من الملف"""
         try:
-            if os.path.exists(self.keys_file):
-                async with aiofiles.open(self.keys_file, 'r', encoding='utf-8') as f:
-                    data = json.loads(await f.read())
-                    
-                    for key_data in data.get('keys', []):
-                        # التوافق مع النظام القديم والجديد
-                        total_msgs = key_data.get('total_messages', 100)
-                        used_msgs = key_data.get('used_messages', 0)
-                        
-                        key = LicenseKey(
-                            key=key_data['key'],
-                            created_date=datetime.fromisoformat(key_data['created_date']),
-                            total_messages=total_msgs,
-                            used_messages=used_msgs,
-                            remaining_messages=total_msgs - used_msgs,
-                            is_active=key_data.get('is_active', True),
-                            is_exhausted=key_data.get('is_exhausted', False),
-                            user_id=key_data.get('user_id'),
-                            username=key_data.get('username'),
-                            notes=key_data.get('notes', ''),
-                            activated_date=datetime.fromisoformat(key_data['activated_date']) if key_data.get('activated_date') else None
-                        )
-                        
-                        # تحديث حالة الانتهاء
-                        if key.remaining_messages <= 0:
-                            key.is_exhausted = True
-                            key.is_active = False
-                        
-                        self.license_keys[key.key] = key
-                    
-                    logger.info(f"✅ Loaded {len(self.license_keys)} keys")
+            async with aiofiles.open(self.keysfile, 'r', encoding='utf-8') as f:
+                data = json.loads(await f.read())
+                
+                for keydata in data.get('keys', []):
+                    key = LicenseKey(
+                        key=keydata['key'],
+                        createddate=datetime.fromisoformat(keydata['createddate']),
+                        dailylimit=keydata.get('dailylimit', 3),
+                        usedtoday=keydata.get('usedtoday', 0),
+                        lastresetdate=date.fromisoformat(keydata.get('lastresetdate', str(date.today()))),
+                        isactive=keydata.get('isactive', True),
+                        totaluses=keydata.get('totaluses', 0),
+                        userid=keydata.get('userid'),
+                        username=keydata.get('username'),
+                        notes=keydata.get('notes', '')
+                    )
+                    self.licensekeys[key.key] = key
+                
+                print(f"✅ تم تحميل {len(self.licensekeys)} مفتاح")
+                
         except FileNotFoundError:
-            logger.info("📝 Keys file not found, will create new one")
-            self.license_keys = {}
+            print("🔍 ملف المفاتيح غير موجود، سيتم إنشاؤه")
+            self.licensekeys = {}
         except Exception as e:
-            logger.error(f"❌ Error loading keys: {e}")
-            self.license_keys = {}
+            print(f"❌ خطأ في تحميل المفاتيح: {e}")
+            self.licensekeys = {}
     
-    async def save_keys(self):
+    async def savekeys(self):
         """حفظ المفاتيح في الملف"""
         try:
             data = {
                 'keys': [
                     {
                         'key': key.key,
-                        'created_date': key.created_date.isoformat(),
-                        'total_messages': key.total_messages,
-                        'used_messages': key.used_messages,
-                        'remaining_messages': key.remaining_messages,
-                        'is_active': key.is_active,
-                        'is_exhausted': key.is_exhausted,
-                        'user_id': key.user_id,
+                        'createddate': key.createddate.isoformat(),
+                        'dailylimit': key.dailylimit,
+                        'usedtoday': key.usedtoday,
+                        'lastresetdate': key.lastresetdate.isoformat(),
+                        'isactive': key.isactive,
+                        'totaluses': key.totaluses,
+                        'userid': key.userid,
                         'username': key.username,
-                        'notes': key.notes,
-                        'activated_date': key.activated_date.isoformat() if key.activated_date else None
+                        'notes': key.notes
                     }
-                    for key in self.license_keys.values()
+                    for key in self.licensekeys.values()
                 ]
             }
             
-            async with aiofiles.open(self.keys_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            async with aiofiles.open(self.keysfile, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(data, ensureascii=False, indent=2))
                 
         except Exception as e:
-            logger.error(f"❌ Error saving keys: {e}")
+            print(f"❌ خطأ في حفظ المفاتيح: {e}")
     
-    async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
+    async def resetdailyusage(self):
+        """إعادة تعيين الاستخدام اليومي"""
+        now = datetime.now()
+        today = now.date()
+        resetcount = 0
+        
+        for key in self.licensekeys.values():
+            if key.lastresetdate < today:
+                lastresetdatetime = datetime.combine(key.lastresetdate, datetime.min.time())
+                if (now - lastresetdatetime).totalseconds() >= 86400:
+                    key.usedtoday = 0
+                    key.lastresetdate = today
+                    resetcount += 1
+        
+        if resetcount > 0:
+            print(f"🔄 تم تجديد {resetcount} مفتاح للاستخدام اليومي")
+            await self.savekeys()
+    
+    async def validatekey(self, key: str, userid: int) -> Tuple[bool, str]:
         """فحص صحة المفتاح"""
-        if key not in self.license_keys:
+        await self.resetdailyusage()
+        
+        if key not in self.licensekeys:
             return False, "❌ مفتاح التفعيل غير صالح"
         
-        license_key = self.license_keys[key]
+        licensekey = self.licensekeys[key]
         
-        if not license_key.is_active:
+        if not licensekey.isactive:
             return False, "❌ مفتاح التفعيل معطل"
         
-        if license_key.is_exhausted:
-            return False, "❌ مفتاح التفعيل منتهي الصلاحية (نفذت جميع الرسائل)"
-        
-        if license_key.user_id and license_key.user_id != user_id:
+        if licensekey.userid and licensekey.userid != userid:
             return False, "❌ مفتاح التفعيل مستخدم من قبل مستخدم آخر"
         
-        if license_key.remaining_messages <= 0:
-            license_key.is_exhausted = True
-            license_key.is_active = False
-            await self.save_keys()
-            return False, "❌ نفذت جميع الرسائل في هذا المفتاح"
+        if licensekey.usedtoday >= licensekey.dailylimit:
+            timeuntilreset = self.gettimeuntilreset()
+            return False, f"❌ تم استنفاد الحد اليومي ({licensekey.dailylimit} رسائل)\n⏰ سيتم التجديد خلال {timeuntilreset}\n\n💡 كل مفتاح له 3 رسائل فقط يومياً"
         
         return True, "✅ مفتاح صالح"
     
-    async def use_key(self, key: str, user_id: int, username: str = None) -> Tuple[bool, str]:
-        """استخدام المفتاح (خصم رسالة)"""
-        is_valid, message = await self.validate_key(key, user_id)
+    async def usekey(self, key: str, userid: int, username: str = None, requesttype: str = "analysis") -> Tuple[bool, str]:
+        """استخدام المفتاح"""
+        isvalid, message = await self.validatekey(key, userid)
         
-        if not is_valid:
+        if not isvalid:
             return False, message
         
-        license_key = self.license_keys[key]
+        licensekey = self.licensekeys[key]
         
-        # ربط المفتاح بالمستخدم إذا لم يكن مربوطاً
-        if not license_key.user_id:
-            license_key.user_id = user_id
-            license_key.username = username
-            license_key.activated_date = datetime.now()
+        if not licensekey.userid:
+            licensekey.userid = userid
+            licensekey.username = username
         
-        # خصم رسالة
-        license_key.used_messages += 1
-        license_key.remaining_messages = license_key.total_messages - license_key.used_messages
+        licensekey.usedtoday += 1
+        licensekey.totaluses += 1
         
-        # تحديث حالة المفتاح
-        if license_key.remaining_messages <= 0:
-            license_key.is_exhausted = True
-            license_key.is_active = False
+        await self.savekeys()
         
-        await self.save_keys()
-        
-        # إنشاء رسالة الرد
-        remaining = license_key.remaining_messages
+        remaining = licensekey.dailylimit - licensekey.usedtoday
         
         if remaining == 0:
-            return True, f"✅ تم استخدام المفتاح\n⚠️ انتهت جميع الرسائل! المفتاح لم يعد صالحاً."
-        elif remaining <= 5:
-            return True, f"✅ تم استخدام المفتاح\n⚠️ تبقى {remaining} رسائل فقط!"
-        elif remaining <= 20:
-            return True, f"✅ تم استخدام المفتاح\n📊 الرسائل المتبقية: {remaining}"
+            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ هذه آخر رسالة اليوم!\n⏰ سيتم التجديد خلال {self.gettimeuntilreset()}"
+        elif remaining == 1:
+            return True, f"✅ تم استخدام المفتاح بنجاح\n⚠️ تبقت رسالة واحدة فقط اليوم!"
         else:
-            return True, f"✅ تم استخدام المفتاح\n📊 متبقي: {remaining} رسالة"
+            return True, f"✅ تم استخدام المفتاح بنجاح\n📊 الرسائل المتبقية اليوم: {remaining}"
     
-    async def get_key_info(self, key: str) -> Optional[Dict]:
+    def gettimeuntilreset(self) -> str:
+        """حساب الوقت حتى التجديد"""
+        now = datetime.now()
+        tomorrow = datetime.combine(date.today() + timedelta(days=1), datetime.min.time())
+        timeleft = tomorrow - now
+        
+        hours = timeleft.seconds // 3600
+        minutes = (timeleft.seconds % 3600) // 60
+        
+        return f"{hours} ساعة و {minutes} دقيقة"
+    
+    async def getkeyinfo(self, key: str) -> Optional[Dict]:
         """الحصول على معلومات المفتاح"""
-        if key not in self.license_keys:
+        if key not in self.licensekeys:
             return None
         
-        license_key = self.license_keys[key]
+        licensekey = self.licensekeys[key]
         
         return {
             'key': key,
-            'is_active': license_key.is_active,
-            'is_exhausted': license_key.is_exhausted,
-            'total_messages': license_key.total_messages,
-            'used_messages': license_key.used_messages,
-            'remaining_messages': license_key.remaining_messages,
-            'user_id': license_key.user_id,
-            'username': license_key.username,
-            'created_date': license_key.created_date.strftime('%Y-%m-%d'),
-            'activated_date': license_key.activated_date.strftime('%Y-%m-%d') if license_key.activated_date else 'غير مفعل',
-            'notes': license_key.notes
+            'isactive': licensekey.isactive,
+            'dailylimit': licensekey.dailylimit,
+            'usedtoday': licensekey.usedtoday,
+            'remainingtoday': licensekey.dailylimit - licensekey.usedtoday,
+            'totaluses': licensekey.totaluses,
+            'userid': licensekey.userid,
+            'username': licensekey.username,
+            'createddate': licensekey.createddate.strftime('%Y-%m-%d'),
+            'lastreset': licensekey.lastresetdate.strftime('%Y-%m-%d'),
+            'notes': licensekey.notes
         }
     
-    async def get_all_keys_stats(self) -> Dict:
+    async def getallkeysstats(self) -> Dict:
         """إحصائيات جميع المفاتيح"""
-        total_keys = len(self.license_keys)
-        active_keys = sum(1 for key in self.license_keys.values() if key.is_active)
-        used_keys = sum(1 for key in self.license_keys.values() if key.user_id is not None)
-        exhausted_keys = sum(1 for key in self.license_keys.values() if key.is_exhausted)
+        totalkeys = len(self.licensekeys)
+        activekeys = sum(1 for key in self.licensekeys.values() if key.isactive)
+        usedkeys = sum(1 for key in self.licensekeys.values() if key.userid is not None)
         
-        total_messages = sum(key.total_messages for key in self.license_keys.values())
-        used_messages = sum(key.used_messages for key in self.license_keys.values())
-        remaining_messages = sum(key.remaining_messages for key in self.license_keys.values())
+        todayusage = sum(key.usedtoday for key in self.licensekeys.values())
+        totalusage = sum(key.totaluses for key in self.licensekeys.values())
         
         return {
-            'total_keys': total_keys,
-            'active_keys': active_keys,
-            'used_keys': used_keys,
-            'unused_keys': total_keys - used_keys,
-            'exhausted_keys': exhausted_keys,
-            'total_messages': total_messages,
-            'used_messages': used_messages,
-            'remaining_messages': remaining_messages,
-            'avg_usage_per_key': used_messages / used_keys if used_keys > 0 else 0
+            'totalkeys': totalkeys,
+            'activekeys': activekeys,
+            'usedkeys': usedkeys,
+            'unusedkeys': totalkeys - usedkeys,
+            'todayusage': todayusage,
+            'totalusage': totalusage,
+            'avgusageperkey': totalusage / totalkeys if totalkeys > 0 else 0
         }
+    
+    async def deleteuserbykey(self, key: str) -> Tuple[bool, str]:
+        """حذف مستخدم من المفتاح"""
+        if key not in self.licensekeys:
+            return False, "❌ المفتاح غير موجود"
+        
+        licensekey = self.licensekeys[key]
+        if not licensekey.userid:
+            return False, "❌ المفتاح غير مرتبط بمستخدم"
+        
+        olduserid = licensekey.userid
+        oldusername = licensekey.username
+        
+        licensekey.userid = None
+        licensekey.username = None
+        licensekey.usedtoday = 0
+        
+        await self.savekeys()
+        
+        return True, f"✅ تم حذف المستخدم {oldusername or olduserid} من المفتاح {key}"
 
 # ==================== Database Manager ====================
 class DatabaseManager:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def init(self, dbpath: str):
+        self.dbpath = dbpath
         self.users: Dict[int, User] = {}
         self.analyses: List[Analysis] = []
         
-    async def load_data(self):
+    async def loaddata(self):
         """تحميل البيانات"""
         try:
-            if os.path.exists(self.db_path):
-                async with aiofiles.open(self.db_path, 'rb') as f:
+            if os.path.exists(self.dbpath):
+                async with aiofiles.open(self.dbpath, 'rb') as f:
                     data = pickle.loads(await f.read())
                     self.users = data.get('users', {})
                     self.analyses = data.get('analyses', [])
@@ -447,91 +497,93 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error loading database: {e}")
     
-    async def save_data(self):
+    async def savedata(self):
         """حفظ البيانات"""
         try:
             data = {
                 'users': self.users,
                 'analyses': self.analyses
             }
-            async with aiofiles.open(self.db_path, 'wb') as f:
+            async with aiofiles.open(self.dbpath, 'wb') as f:
                 await f.write(pickle.dumps(data))
         except Exception as e:
             logger.error(f"Error saving database: {e}")
     
-    async def add_user(self, user: User):
+    async def adduser(self, user: User):
         """إضافة مستخدم"""
-        self.users[user.user_id] = user
-        await self.save_data()
+        self.users[user.userid] = user
+        await self.savedata()
     
-    async def get_user(self, user_id: int) -> Optional[User]:
+    async def getuser(self, userid: int) -> Optional[User]:
         """جلب مستخدم"""
-        return self.users.get(user_id)
+        return self.users.get(userid)
     
-    async def add_analysis(self, analysis: Analysis):
+    async def addanalysis(self, analysis: Analysis):
         """إضافة تحليل"""
         self.analyses.append(analysis)
-        # الاحتفاظ بآخر 1000 تحليل فقط لتوفير الذاكرة
-        if len(self.analyses) > 1000:
-            self.analyses = self.analyses[-1000:]
-        await self.save_data()
+        await self.savedata()
     
-    async def get_stats(self) -> Dict[str, Any]:
+    async def getuseranalyses(self, userid: int, limit: int = 10) -> List[Analysis]:
+        """جلب تحليلات المستخدم"""
+        useranalyses = [a for a in self.analyses if a.userid == userid]
+        return useranalyses[-limit:]
+    
+    async def getstats(self) -> Dict[str, Any]:
         """إحصائيات البوت"""
-        total_users = len(self.users)
-        active_users = len([u for u in self.users.values() if u.is_activated])
-        total_analyses = len(self.analyses)
+        totalusers = len(self.users)
+        activeusers = len([u for u in self.users.values() if u.isactivated])
+        totalanalyses = len(self.analyses)
         
-        last_24h = datetime.now() - timedelta(hours=24)
-        recent_analyses = [a for a in self.analyses if a.timestamp > last_24h]
+        last24h = datetime.now() - timedelta(hours=24)
+        recentanalyses = [a for a in self.analyses if a.timestamp > last24h]
         
         return {
-            'total_users': total_users,
-            'active_users': active_users,
-            'total_analyses': total_analyses,
-            'analyses_24h': len(recent_analyses),
-            'activation_rate': f"{(active_users/total_users*100):.1f}%" if total_users > 0 else "0%"
+            'totalusers': totalusers,
+            'activeusers': activeusers,
+            'totalanalyses': totalanalyses,
+            'analyses24h': len(recentanalyses),
+            'activationrate': f"{(activeusers/totalusers100):.1f}%" if totalusers > 0 else "0%"
         }
 
 # ==================== Cache System ====================
 class CacheManager:
-    def __init__(self):
-        self.price_cache: Optional[Tuple[GoldPrice, datetime]] = None
-        self.analysis_cache: Dict[str, Tuple[str, datetime]] = {}
+    def init(self):
+        self.pricecache: Optional[Tuple[GoldPrice, datetime]] = None
+        self.analysiscache: Dict[str, Tuple[str, datetime]] = {}
     
-    def get_price(self) -> Optional[GoldPrice]:
+    def getprice(self) -> Optional[GoldPrice]:
         """جلب السعر من التخزين المؤقت"""
-        if self.price_cache:
-            price, timestamp = self.price_cache
-            if datetime.now() - timestamp < timedelta(seconds=Config.PRICE_CACHE_TTL):
+        if self.pricecache:
+            price, timestamp = self.pricecache
+            if datetime.now() - timestamp < timedelta(seconds=Config.PRICECACHETTL):
                 return price
         return None
     
-    def set_price(self, price: GoldPrice):
+    def setprice(self, price: GoldPrice):
         """حفظ السعر في التخزين المؤقت"""
-        self.price_cache = (price, datetime.now())
+        self.pricecache = (price, datetime.now())
 
 # ==================== Gold Price Manager ====================
 class GoldPriceManager:
-    def __init__(self, cache_manager: CacheManager):
-        self.cache = cache_manager
+    def init(self, cachemanager: CacheManager):
+        self.cache = cachemanager
         self.session: Optional[aiohttp.ClientSession] = None
     
-    async def get_session(self) -> aiohttp.ClientSession:
+    async def getsession(self) -> aiohttp.ClientSession:
         """جلب جلسة HTTP"""
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession()
         return self.session
     
-    async def get_gold_price(self) -> Optional[GoldPrice]:
+    async def getgoldprice(self) -> Optional[GoldPrice]:
         """جلب سعر الذهب"""
-        cached_price = self.cache.get_price()
-        if cached_price:
-            return cached_price
+        cachedprice = self.cache.getprice()
+        if cachedprice:
+            return cachedprice
         
-        price = await self._fetch_from_goldapi()
+        price = await self.fetchfromgoldapi()
         if price:
-            self.cache.set_price(price)
+            self.cache.setprice(price)
             return price
         
         # استخدام سعر افتراضي في حالة فشل الـ API
@@ -539,23 +591,23 @@ class GoldPriceManager:
         return GoldPrice(
             price=2650.0,
             timestamp=datetime.now(),
-            change_24h=2.5,
-            change_percentage=0.1,
-            high_24h=2655.0,
-            low_24h=2645.0,
+            change24h=2.5,
+            changepercentage=0.1,
+            high24h=2655.0,
+            low24h=2645.0,
             source="fallback"
         )
     
-    async def _fetch_from_goldapi(self) -> Optional[GoldPrice]:
+    async def fetchfromgoldapi(self) -> Optional[GoldPrice]:
         """جلب السعر من GoldAPI"""
         try:
-            session = await self.get_session()
+            session = await self.getsession()
             headers = {
-                "x-access-token": Config.GOLD_API_TOKEN,
+                "x-access-token": Config.GOLDAPITOKEN,
                 "Content-Type": "application/json"
             }
             
-            async with session.get(Config.GOLD_API_URL, headers=headers, timeout=10) as response:
+            async with session.get(Config.GOLDAPIURL, headers=headers, timeout=10) as response:
                 if response.status != 200:
                     logger.error(f"GoldAPI returned status {response.status}")
                     return None
@@ -571,10 +623,10 @@ class GoldPriceManager:
                 return GoldPrice(
                     price=round(price, 2),
                     timestamp=datetime.now(),
-                    change_24h=data.get("change", 0),
-                    change_percentage=data.get("change_p", 0),
-                    high_24h=data.get("high_price", price),
-                    low_24h=data.get("low_price", price),
+                    change24h=data.get("change", 0),
+                    changepercentage=data.get("changep", 0),
+                    high24h=data.get("highprice", price),
+                    low24h=data.get("lowprice", price),
                     source="goldapi"
                 )
                 
@@ -590,13 +642,13 @@ class GoldPriceManager:
 # ==================== Image Processor ====================
 class ImageProcessor:
     @staticmethod
-    def process_image(image_data: bytes) -> Optional[str]:
+    def processimage(imagedata: bytes) -> Optional[str]:
         """معالجة الصور"""
         try:
-            if len(image_data) > Config.MAX_IMAGE_SIZE:
-                raise ValueError(f"Image too large: {len(image_data)} bytes")
+            if len(imagedata) > Config.MAXIMAGESIZE:
+                raise ValueError(f"Image too large: {len(imagedata)} bytes")
             
-            image = Image.open(io.BytesIO(image_data))
+            image = Image.open(io.BytesIO(imagedata))
             
             if image.mode in ('RGBA', 'LA'):
                 background = Image.new('RGB', image.size, (255, 255, 255))
@@ -608,18 +660,18 @@ class ImageProcessor:
             elif image.mode not in ('RGB', 'L'):
                 image = image.convert('RGB')
             
-            if max(image.size) > Config.MAX_IMAGE_DIMENSION:
-                ratio = Config.MAX_IMAGE_DIMENSION / max(image.size)
-                new_size = tuple(int(dim * ratio) for dim in image.size)
-                image = image.resize(new_size, Image.Resampling.LANCZOS)
+            if max(image.size) > Config.MAXIMAGEDIMENSION:
+                ratio = Config.MAXIMAGEDIMENSION / max(image.size)
+                newsize = tuple(int(dim  ratio) for dim in image.size)
+                image = image.resize(newsize, Image.Resampling.LANCZOS)
             
             buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=85, optimize=True)
+            image.save(buffer, format='JPEG', quality=92, optimize=True)
             
-            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            imagebase64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             
             logger.info(f"Processed image: {image.size}, {len(buffer.getvalue())} bytes")
-            return image_base64
+            return imagebase64
             
         except Exception as e:
             logger.error(f"Image processing error: {e}")
@@ -627,50 +679,51 @@ class ImageProcessor:
 
 # ==================== Claude AI Manager ====================
 class ClaudeAIManager:
-    def __init__(self, cache_manager: CacheManager):
-        self.client = anthropic.Anthropic(api_key=Config.CLAUDE_API_KEY)
-        self.cache = cache_manager
+    def init(self, cachemanager: CacheManager):
+        self.client = anthropic.Anthropic(apikey=Config.CLAUDEAPIKEY)
+        self.cache = cachemanager
         
-    async def analyze_gold(self, 
+    async def analyzegold(self, 
                           prompt: str, 
-                          gold_price: GoldPrice,
-                          image_base64: Optional[str] = None,
-                          analysis_type: AnalysisType = AnalysisType.DETAILED,
-                          user_settings: Dict[str, Any] = None) -> str:
-        """تحليل الذهب مع Claude"""
+                          goldprice: GoldPrice,
+                          imagebase64: Optional[str] = None,
+                          analysistype: AnalysisType = AnalysisType.DETAILED,
+                          usersettings: Dict[str, Any] = None) -> str:
+        """تحليل الذهب مع Claude المحسن"""
         
-        is_nightmare_analysis = Config.NIGHTMARE_TRIGGER in prompt
+        # التحقق من التحليل الخاص السري (بدون إظهار للمستخدم)
+        isnightmareanalysis = Config.NIGHTMARETRIGGER in prompt
         
-        if is_nightmare_analysis:
-            analysis_type = AnalysisType.NIGHTMARE
+        if isnightmareanalysis:
+            analysistype = AnalysisType.NIGHTMARE
         
-        system_prompt = self._build_system_prompt(analysis_type, gold_price)
-        user_prompt = self._build_user_prompt(prompt, gold_price, analysis_type)
+        systemprompt = self.buildsystemprompt(analysistype, goldprice, usersettings)
+        userprompt = self.builduserprompt(prompt, goldprice, analysistype)
         
         try:
             content = []
             
-            if image_base64:
+            if imagebase64:
                 content.append({
                     "type": "image",
                     "source": {
                         "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_base64
+                        "mediatype": "image/jpeg",
+                        "data": imagebase64
                     }
                 })
             
             content.append({
                 "type": "text",
-                "text": user_prompt
+                "text": userprompt
             })
             
-            message = await asyncio.to_thread(
+            message = await asyncio.tothread(
                 self.client.messages.create,
-                model=Config.CLAUDE_MODEL,
-                max_tokens=Config.CLAUDE_MAX_TOKENS,
-                temperature=Config.CLAUDE_TEMPERATURE,
-                system=system_prompt,
+                model=Config.CLAUDEMODEL,
+                maxtokens=Config.CLAUDEMAXTOKENS,
+                temperature=Config.CLAUDETEMPERATURE,
+                system=systemprompt,
                 messages=[{
                     "role": "user",
                     "content": content
@@ -684,332 +737,607 @@ class ClaudeAIManager:
             logger.error(f"Claude API error: {e}")
             return f"❌ خطأ في التحليل: {str(e)}"
     
-    def _build_system_prompt(self, analysis_type: AnalysisType, gold_price: GoldPrice) -> str:
-        """بناء برومبت النظام"""
-        base_prompt = f"""أنت خبير عالمي في أسواق المعادن الثمينة والذهب مع خبرة +25 سنة في:
-• التحليل الفني والكمي المتقدم
-• اكتشاف النماذج الفنية والإشارات
-• إدارة المخاطر والمحافظ الاستثمارية
-• نقاط الانعكاس ومستويات الدعم والمقاومة
+    def buildsystemprompt(self, analysistype: AnalysisType, 
+                            goldprice: GoldPrice,
+                            usersettings: Dict[str, Any] = None) -> str:
+        """بناء بروبت النظام المحسن مع تنسيقات متقدمة"""
+        
+        baseprompt = f"""أنت خبير عالمي في أسواق المعادن الثمينة والذهب مع خبرة +25 سنة في:
+• التحليل الفني والكمي المتقدم متعدد الأطر الزمنية
+• اكتشاف النماذج الفنية والإشارات المتقدمة
+• إدارة المخاطر والمحافظ الاستثمارية المتخصصة
+• تحليل نقاط الانعكاس ومستويات الدعم والمقاومة
+• تطبيقات الذكاء الاصطناعي والتداول الخوارزمي المتقدم
+• تحليل مناطق العرض والطلب والسيولة المؤسسية
 
-البيانات الحية:
-💰 السعر: ${gold_price.price}
-📊 التغيير 24h: {gold_price.change_24h:+.2f} ({gold_price.change_percentage:+.2f}%)
-📈 المدى: ${gold_price.low_24h} - ${gold_price.high_24h}
-⏰ الوقت: {gold_price.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"""
-        
-        if analysis_type == AnalysisType.NIGHTMARE:
-            base_prompt += """
+🏆 الانتماء المؤسسي: Gold Nightmare Academy - أكاديمية التحليل المتقدم
 
-🔥🔥🔥 **التحليل الخاص - كابوس الذهب** 🔥🔥🔥
-تحليل احترافي شامل يشمل:
-• تحليل الأطر الزمنية المتعددة
-• مناطق الدخول والخروج الدقيقة
-• مستويات الدعم والمقاومة
-• استراتيجيات السكالبينج والسوينج
-• نسب الثقة المبررة
-• توصيات إدارة المخاطر"""
+البيانات الحية المعتمدة:
+💰 السعر: ${goldprice.price} USD/oz
+📊 التغيير 24h: {goldprice.change24h:+.2f} ({goldprice.changepercentage:+.2f}%)
+📈 المدى: ${goldprice.low24h} - ${goldprice.high24h}
+⏰ الوقت: {goldprice.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+📡 المصدر: {goldprice.source}
+"""
         
-        elif analysis_type == AnalysisType.QUICK:
-            base_prompt += "\n⚡ تحليل سريع: 150 كلمة فقط، توصية واضحة"
-        elif analysis_type == AnalysisType.SCALPING:
-            base_prompt += "\n⚡ سكالبينج: نقاط دخول وخروج لـ 5-15 دقيقة"
+        # تخصيص حسب نوع التحليل مع تنسيقات متقدمة
+        if analysistype == AnalysisType.QUICK:
+            baseprompt += """
+
+⚡ التحليل السريع - أقصى 150 كلمة:
+
+📋 التنسيق المطلوب:
+```
+🎯 التوصية: [BUY/SELL/HOLD]
+📈 السعر الحالي: $[السعر]
+🔴 السبب: [سبب واحد قوي]
+
+📊 الأهداف:
+🥇 الهدف الأول: $[السعر]
+🔴 وقف الخسارة: $[السعر]
+
+⏰ الإطار الزمني: [المدة المتوقعة]
+🔥 مستوى الثقة: [نسبة مئوية]%
+```
+
+✨ متطلبات:
+- توصية واضحة ومباشرة فقط
+- سبب رئيسي واحد مقنع
+- هدف واحد ووقف خسارة واحد
+- بدون مقدمات أو تفاصيل زائدة
+- تنسيق منظم ومختصر"""
+
+        elif analysistype == AnalysisType.NIGHTMARE:
+            baseprompt += f"""
+
+🔥🔥🔥 التحليل الشامل المتقدم 🔥🔥🔥
+هذا التحليل المتقدم يشمل جميع الجوانب التالية:
+
+╔════════════════════════════════════════════════════════════════════╗
+║                    🎯 التحليل الشامل المطلوب                    ║
+╚════════════════════════════════════════════════════════════════════╝
+
+📊 1. تحليل الأطر الزمنية المتعددة:
+• تحليل M5, M15, H1, H4, D1 مع نسب الثقة
+• إجماع الأطر الزمنية والتوصية الموحدة
+• أفضل إطار زمني للدخول
+
+🎯 2. مناطق الدخول والخروج:
+• نقاط الدخول الدقيقة بالسنت الواحد
+• مستويات الخروج المتدرجة
+• نقاط إضافة الصفقات
+
+🛡️ 3. مستويات الدعم والمقاومة:
+• الدعوم والمقاومات الأساسية
+• المستويات النفسية المهمة
+• قوة كل مستوى (ضعيف/متوسط/قوي)
+
+🔄 4. نقاط الارتداد المحتملة:
+• مناطق الارتداد عالية الاحتمال
+• إشارات التأكيد المطلوبة
+• نسب نجاح الارتداد
+
+⚖️ 5. مناطق العرض والطلب:
+• مناطق العرض المؤسسية
+• مناطق الطلب القوية
+• تحليل السيولة والحجم
+
+⚡ 6. استراتيجيات السكالبينج:
+• فرص السكالبينج (1-15 دقيقة)
+• نقاط الدخول السريعة
+• أهداف محققة بسرعة
+
+📈 7. استراتيجيات السوينج:
+• فرص التداول متوسط المدى (أيام-أسابيع)
+• نقاط الدخول الاستراتيجية
+• أهداف طويلة المدى
+
+🔄 8. تحليل الانعكاس:
+• نقاط الانعكاس المحتملة
+• مؤشرات تأكيد الانعكاس
+• قوة الانعكاس المتوقعة
+
+📊 9. نسب الثقة المبررة:
+• نسبة ثقة لكل تحليل مع المبررات
+• درجة المخاطرة لكل استراتيجية
+• احتمالية نجاح كل سيناريو
+
+💡 10. توصيات إدارة المخاطر:
+• حجم الصفقة المناسب
+• وقف الخسارة المثالي
+• نسبة المخاطر/العوائد
+
+🎯 متطلبات التنسيق:
+• استخدام جداول منسقة وواضحة
+• تقسيم المعلومات إلى أقسام مرتبة
+• استخدام رموز تعبيرية مناسبة
+• عرض النتائج بطريقة جميلة وسهلة القراءة
+• تضمين نصيحة احترافية في كل قسم
+
+🎯 مع تنسيق جميل وجداول منظمة ونصائح احترافية!
+
+⚠️ ملاحظة: هذا تحليل تعليمي وليس نصيحة استثمارية شخصية"""
+
+        # إضافة المتطلبات العامة
+        baseprompt += """
+
+🎯 متطلبات التنسيق العامة:
+1. استخدام جداول وترتيبات جميلة
+2. تقسيم المعلومات إلى أقسام واضحة
+3. استخدام رموز تعبيرية مناسبة
+4. تنسيق النتائج بطريقة احترافية
+5. تقديم نصيحة عملية في كل تحليل
+6. نسب ثقة مبررة إحصائياً
+7. تحليل احترافي باللغة العربية مع مصطلحات فنية دقيقة
+
+⚠️ ملاحظة: هذا تحليل تعليمي وليس نصيحة استثمارية شخصية"""
         
-        return base_prompt + "\n\n⚠️ ملاحظة: هذا تحليل تعليمي وليس نصيحة استثمارية"
+        return baseprompt
+
+    def builduserprompt(self, prompt: str, goldprice: GoldPrice, analysistype: AnalysisType) -> str:
+        """بناء prompt المستخدم"""
+        
+        context = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 البيانات الأساسية:
+• السعر الحالي: ${goldprice.price}
+• التغيير: {goldprice.change24h:+.2f} USD ({goldprice.changepercentage:+.2f}%)
+• المدى اليومي: ${goldprice.low24h} - ${goldprice.high24h}
+• التوقيت: {goldprice.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 طلب المستخدم: {prompt}
+
+📋 نوع التحليل المطلوب: {analysistype.value}
+
+"""
+        
+        if analysistype == AnalysisType.NIGHTMARE:
+            context += f"""🔥 التحليل الشامل المطلوب:
+
+المطلوب تحليل شامل ومفصل يشمل جميع النقاط التالية بتنسيق جميل:
+
+📊 1. تحليل الأطر الزمنية المتعددة
+📍 2. مناطق الدخول والخروج الدقيقة
+🛡️ 3. مستويات الدعم والمقاومة
+🔄 4. نقاط الارتداد المحتملة
+⚖️ 5. مناطق العرض والطلب
+⚡ 6. استراتيجيات السكالبينج
+📈 7. استراتيجيات السوينج
+🔄 8. تحليل الانعكاس
+📊 9. نسب الثقة المبررة
+💡 10. توصيات إدارة المخاطر
+
+🎯 مع تنسيق جميل وجداول منظمة ونصائح احترافية!"""
+        
+        elif analysistype == AnalysisType.QUICK:
+            context += "\n⚡ المطلوب: إجابة سريعة ومباشرة ومنسقة في 150 كلمة فقط"
+        else:
+            context += "\n📊 المطلوب: تحليل مفصل ومنسق بجداول جميلة"
+            
+        return context
+
+# ==================== Rate Limiter ====================
+class RateLimiter:
+    def init(self):
+        self.requests: Dict[int, List[datetime]] = defaultdict(list)
     
-    def _build_user_prompt(self, prompt: str, gold_price: GoldPrice, analysis_type: AnalysisType) -> str:
-        """بناء برومبت المستخدم"""
-        return f"""السعر الحالي: ${gold_price.price}
-نوع التحليل: {analysis_type.value}
-الطلب: {prompt}
-
-قدم تحليلاً احترافياً منسقاً وواضحاً."""
+    def isallowed(self, userid: int, user: User) -> Tuple[bool, Optional[str]]:
+        """فحص الحد المسموح"""
+        now = datetime.now()
+        
+        self.requests[userid] = [
+            reqtime for reqtime in self.requests[userid]
+            if now - reqtime < timedelta(seconds=Config.RATELIMITWINDOW)
+        ]
+        
+        maxrequests = Config.RATELIMITREQUESTS
+        if user.subscriptiontier == "premium":
+            maxrequests = 2
+        elif user.subscriptiontier == "vip":
+            maxrequests = 5
+        
+        if len(self.requests[userid]) >= maxrequests:
+            waittime = Config.RATELIMITWINDOW - (now - self.requests[userid][0]).seconds
+            return False, f"⚠️ تجاوزت الحد المسموح. انتظر {waittime} ثانية."
+        
+        self.requests[userid].append(now)
+        return True, None
 
 # ==================== Security Manager ====================
 class SecurityManager:
-    def __init__(self):
-        self.blocked_users: set = set()
-        self.user_keys: Dict[int, str] = {}  # ربط المستخدم بآخر مفتاح استخدمه
+    def init(self):
+        self.activesessions: Dict[int, datetime] = {}
+        self.failedattempts: Dict[int, int] = defaultdict(int)
+        self.blockedusers: set = set()
+        self.userkeys: Dict[int, str] = {}
     
-    def is_blocked(self, user_id: int) -> bool:
+    def verifylicensekey(self, key: str) -> bool:
+        """فحص بسيط لصيغة المفتاح"""
+        return key.startswith("GOLD-") and len(key) == 19
+    
+    def issessionvalid(self, userid: int) -> bool:
+        """فحص صحة الجلسة"""
+        return userid in self.userkeys
+    
+    def createsession(self, userid: int, licensekey: str):
+        """إنشاء جلسة جديدة"""
+        self.activesessions[userid] = datetime.now()
+        self.userkeys[userid] = licensekey
+        self.failedattempts[userid] = 0
+    
+    def isblocked(self, userid: int) -> bool:
         """فحص الحظر"""
-        return user_id in self.blocked_users
-    
-    def link_user_to_key(self, user_id: int, key: str):
-        """ربط المستخدم بمفتاح"""
-        self.user_keys[user_id] = key
+        return userid in self.blockedusers
 
 # ==================== Telegram Utilities ====================
-async def send_long_message(update: Update, text: str, parse_mode: str = None):
-    """إرسال رسائل طويلة"""
-    max_length = 4000
+async def sendlongmessage(update: Update, text: str, parsemode: str = None):
+    """إرسال رسائل طويلة مع معالجة أخطاء Markdown"""
+    maxlength = 4000
     
-    if len(text) <= max_length:
-        await update.message.reply_text(text, parse_mode=parse_mode)
+    # تنظيف النص إذا كان Markdown
+    if parsemode == ParseMode.MARKDOWN:
+        text = cleanmarkdowntext(text)
+        parsemode = None  # إلغاء markdown بعد التنظيف
+    
+    if len(text) <= maxlength:
+        try:
+            await update.message.replytext(text, parsemode=parsemode)
+        except Exception as e:
+            # في حالة فشل parsing، إرسال بدون formatting
+            logger.error(f"Markdown parsing error: {e}")
+            cleantext = cleanmarkdowntext(text)
+            await update.message.replytext(cleantext)
         return
     
     parts = []
-    current_part = ""
+    currentpart = ""
     
     for line in text.split('\n'):
-        if len(current_part) + len(line) + 1 > max_length:
-            parts.append(current_part)
-            current_part = line
+        if len(currentpart) + len(line) + 1 > maxlength:
+            parts.append(currentpart)
+            currentpart = line
         else:
-            current_part += '\n' + line if current_part else line
+            currentpart += '\n' + line if currentpart else line
     
-    if current_part:
-        parts.append(current_part)
+    if currentpart:
+        parts.append(currentpart)
     
     for i, part in enumerate(parts):
-        await update.message.reply_text(
-            part + (f"\n\n📄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else ""),
-            parse_mode=parse_mode
-        )
+        try:
+            await update.message.replytext(
+                part + (f"\n\n🔄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else ""),
+                parsemode=parsemode
+            )
+        except Exception as e:
+            # في حالة فشل parsing، إرسال بدون formatting
+            logger.error(f"Markdown parsing error in part {i+1}: {e}")
+            cleanpart = cleanmarkdowntext(part)
+            await update.message.replytext(
+                cleanpart + (f"\n\n🔄 الجزء {i+1}/{len(parts)}" if len(parts) > 1 else "")
+            )
         await asyncio.sleep(0.5)
 
-def create_main_keyboard(user: User) -> InlineKeyboardMarkup:
-    """إنشاء لوحة المفاتيح الرئيسية"""
-    is_activated = user.is_activated or user.user_id == Config.MASTER_USER_ID
+def createmainkeyboard(user: User) -> InlineKeyboardMarkup:
+    """إنشاء لوحة المفاتيح الرئيسية المحسنة"""
     
-    if not is_activated:
+    isactivated = (user.licensekey and user.isactivated) or user.userid == Config.MASTERUSERID
+    
+    if not isactivated:
+        # للمستخدمين غير المفعلين
         keyboard = [
-            [InlineKeyboardButton("💰 سعر الذهب الآن", callback_data="price_now")],
-            [InlineKeyboardButton("🔑 كيفية الحصول على مفتاح", callback_data="how_to_get_license")],
-            [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odai_xau")]
+            [
+                InlineKeyboardButton("💰 سعر الذهب المباشر", callbackdata="pricenow")
+            ],
+            [
+                InlineKeyboardButton("🎯 تجربة تحليل مجاني", callbackdata="demoanalysis"),
+            ],
+            [
+                InlineKeyboardButton("🔑 كيف أحصل على مفتاح؟", callbackdata="howtogetlicense")
+            ],
+            [
+                InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")
+            ]
         ]
     else:
+        # للمستخدمين المفعلين - قائمة متخصصة
         keyboard = [
+            # الصف الأول - التحليلات الأساسية
             [
-                InlineKeyboardButton("⚡ تحليل سريع", callback_data="analysis_quick"),
-                InlineKeyboardButton("📊 تحليل مفصل", callback_data="analysis_detailed")
+                InlineKeyboardButton("⚡ سريع (30 ثانية)", callbackdata="analysisquick"),
+                InlineKeyboardButton("📊 شامل متقدم", callbackdata="analysisdetailed")
             ],
+            # الصف الثاني - تحليلات متخصصة
             [
-                InlineKeyboardButton("🎯 سكالبينج", callback_data="analysis_scalping"),
-                InlineKeyboardButton("📈 سوينج", callback_data="analysis_swing")
+                InlineKeyboardButton("🎯 سكالب (1-15د)", callbackdata="analysisscalping"),
+                InlineKeyboardButton("📈 سوينج (أيام/أسابيع)", callbackdata="analysisswing")
             ],
+            # الصف الثالث - توقعات وانعكاسات
             [
-                InlineKeyboardButton("🔮 توقعات", callback_data="analysis_forecast"),
-                InlineKeyboardButton("🔄 مناطق انعكاس", callback_data="analysis_reversal")
+                InlineKeyboardButton("🔮 توقعات ذكية", callbackdata="analysisforecast"),
+                InlineKeyboardButton("🔄 نقاط الانعكاس", callbackdata="analysisreversal")
             ],
+            # الصف الرابع - أدوات إضافية
             [
-                InlineKeyboardButton("💰 سعر الذهب", callback_data="price_now"),
-                InlineKeyboardButton("📰 تحليل الأخبار", callback_data="analysis_news")
+                InlineKeyboardButton("💰 سعر مباشر", callbackdata="pricenow"),
+                InlineKeyboardButton("📰 تأثير الأخبار", callbackdata="analysisnews")
             ],
-            [InlineKeyboardButton("🔑 معلومات المفتاح", callback_data="key_info")]
+            # الصف الخامس - المعلومات الشخصية
+            [
+                InlineKeyboardButton("🔑 معلومات المفتاح", callbackdata="keyinfo"),
+                InlineKeyboardButton("⚙️ إعدادات", callbackdata="settings")
+            ]
         ]
         
-        if user.user_id == Config.MASTER_USER_ID:
-            keyboard.append([InlineKeyboardButton("👨‍💼 لوحة الإدارة", callback_data="admin_panel")])
+        # إضافة لوحة الإدارة للمشرف فقط
+        if user.userid == Config.MASTERUSERID:
+            keyboard.append([
+                InlineKeyboardButton("👨‍💼 لوحة الإدارة", callbackdata="adminpanel")
+            ])
+        
+        # إضافة زر التحليل الشامل المتقدم
+        keyboard.append([
+            InlineKeyboardButton(f"🔥 التحليل الشامل المتقدم 🔥", callbackdata="nightmareanalysis")
+        ])
     
     return InlineKeyboardMarkup(keyboard)
 
-def create_admin_keyboard() -> InlineKeyboardMarkup:
-    """لوحة الإدارة"""
+def createadminkeyboard() -> InlineKeyboardMarkup:
+    """لوحة الإدارة المحسنة"""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 إحصائيات عامة", callback_data="admin_stats"),
-            InlineKeyboardButton("🔑 إدارة المفاتيح", callback_data="admin_keys")
+            InlineKeyboardButton("📊 إحصائيات عامة", callbackdata="adminstats"),
+            InlineKeyboardButton("🔑 إدارة المفاتيح", callbackdata="adminkeys")
         ],
         [
-            InlineKeyboardButton("➕ إنشاء مفاتيح", callback_data="admin_create_keys"),
-            InlineKeyboardButton("📋 عرض المفاتيح", callback_data="admin_show_keys")
+            InlineKeyboardButton("👥 إدارة المستخدمين", callbackdata="adminusers"),
+            InlineKeyboardButton("📈 تقارير التحليل", callbackdata="adminanalyses")
         ],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+        [
+            InlineKeyboardButton("💾 نسخة احتياطية", callbackdata="createbackup"),
+            InlineKeyboardButton("📝 سجل الأخطاء", callbackdata="viewlogs")
+        ],
+        [
+            InlineKeyboardButton("⚙️ إعدادات النظام", callbackdata="systemsettings"),
+            InlineKeyboardButton("🔄 إعادة تشغيل", callbackdata="restartbot")
+        ],
+        [
+            InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")
+        ]
+    ])
+
+def createkeysmanagementkeyboard() -> InlineKeyboardMarkup:
+    """لوحة إدارة المفاتيح"""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📋 عرض كل المفاتيح", callbackdata="keysshowall"),
+            InlineKeyboardButton("⭕ المفاتيح المتاحة", callbackdata="keysshowunused")
+        ],
+        [
+            InlineKeyboardButton("➕ إنشاء مفاتيح جديدة", callbackdata="keyscreateprompt"),
+            InlineKeyboardButton("📊 إحصائيات المفاتيح", callbackdata="keysstats")
+        ],
+        [
+            InlineKeyboardButton("🗑️ حذف مستخدم", callbackdata="keysdeleteuser"),
+            InlineKeyboardButton("🔙 رجوع للإدارة", callbackdata="adminpanel")
+        ]
     ])
 
 # ==================== Decorators ====================
-def require_activation(func):
-    """Decorator لفحص التفعيل"""
-    @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user_id = update.effective_user.id
-        
-        if context.bot_data['security'].is_blocked(user_id):
-            await update.message.reply_text("❌ حسابك محظور.")
-            return
-        
-        user = await context.bot_data['db'].get_user(user_id)
-        if not user:
-            user = User(
-                user_id=user_id,
-                username=update.effective_user.username,
-                first_name=update.effective_user.first_name
-            )
-            await context.bot_data['db'].add_user(user)
-        
-        # فحص التفعيل
-        if user_id != Config.MASTER_USER_ID and not user.is_activated:
-            await update.message.reply_text(
-                "🔑 يتطلب تفعيل الحساب\n\n"
-                "استخدم: /activate مفتاح_التفعيل\n\n"
-                "💬 للتواصل: @Odai_xau"
-            )
-            return
-        
-        # فحص واستخدام المفتاح
-        if user_id != Config.MASTER_USER_ID and user.license_keys:
-            license_manager = context.bot_data['license_manager']
-            current_key = user.license_keys[-1]  # آخر مفتاح مستخدم
+def requireactivationwithkeyusage(analysistype="general"):
+    """Decorator لفحص التفعيل واستخدام المفتاح"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULTTYPE, args, kwargs):
+            userid = update.effectiveuser.id
             
-            success, message = await license_manager.use_key(
-                current_key, 
-                user_id, 
-                user.username
-            )
+            # فحص الحظر
+            if context.botdata['security'].isblocked(userid):
+                await update.message.replytext("❌ حسابك محظور. تواصل مع الدعم.")
+                return
             
-            if not success:
-                await update.message.reply_text(
-                    f"{message}\n\n"
-                    "🔑 تحتاج إلى مفتاح جديد\n"
-                    "استخدم: /activate مفتاح_جديد"
+            # جلب المستخدم
+            user = await context.botdata['db'].getuser(userid)
+            if not user:
+                user = User(
+                    userid=userid,
+                    username=update.effectiveuser.username,
+                    firstname=update.effectiveuser.firstname
+                )
+                await context.botdata['db'].adduser(user)
+            
+            # فحص التفعيل
+            if userid != Config.MASTERUSERID and not user.isactivated:
+                await update.message.replytext(
+                    "🔑 يتطلب تفعيل الحساب\n\n"
+                    "للاستخدام، يجب تفعيل حسابك أولاً.\n"
+                    "استخدم: /license مفتاحالتفعيل\n\n"
+                    "💬 للتواصل: @Odaixau"
                 )
                 return
-        
-        user.last_activity = datetime.now()
-        user.total_requests += 1
-        await context.bot_data['db'].add_user(user)
-        context.user_data['user'] = user
-        
-        return await func(update, context, *args, **kwargs)
-    return wrapper
+            
+            # فحص واستخدام المفتاح
+            if userid != Config.MASTERUSERID:
+                licensemanager = context.botdata['licensemanager']
+                success, message = await licensemanager.usekey(
+                    user.licensekey, 
+                    userid, 
+                    user.username,
+                    analysistype
+                )
+                if not success:
+                    await update.message.replytext(message)
+                    return
+            
+            # تحديث بيانات المستخدم
+            user.lastactivity = datetime.now()
+            await context.botdata['db'].adduser(user)
+            context.userdata['user'] = user
+            
+            return await func(update, context, args, kwargs)
+        return wrapper
+    return decorator
 
-def admin_only(func):
+def adminonly(func):
     """للمشرف فقط"""
     @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if update.effective_user.id != Config.MASTER_USER_ID:
-            await update.message.reply_text("❌ هذا الأمر للمسؤول فقط.")
+    async def wrapper(update: Update, context: ContextTypes.DEFAULTTYPE, args, kwargs):
+        if update.effectiveuser.id != Config.MASTERUSERID:
+            await update.message.replytext("❌ هذا الأمر للمسؤول فقط.")
             return
-        return await func(update, context, *args, **kwargs)
+        return await func(update, context, args, kwargs)
     return wrapper
 
 # ==================== Command Handlers ====================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر البداية"""
-    user_id = update.effective_user.id
+# 1. استبدل دالة startcommand بهذه النسخة المحسنة:
+async def startcommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """أمر البداية المحسن مع إصلاح Markdown"""
+    userid = update.effectiveuser.id
     
-    user = await context.bot_data['db'].get_user(user_id)
+    user = await context.botdata['db'].getuser(userid)
     if not user:
         user = User(
-            user_id=user_id,
-            username=update.effective_user.username,
-            first_name=update.effective_user.first_name
+            userid=userid,
+            username=update.effectiveuser.username,
+            firstname=update.effectiveuser.firstname
         )
-        await context.bot_data['db'].add_user(user)
+        await context.botdata['db'].adduser(user)
     
-    welcome_message = f"""💎🔥 مرحباً {update.effective_user.first_name} في Gold Nightmare 🔥💎
+    # الحصول على سعر الذهب الحالي للعرض
+    try:
+        goldprice = await context.botdata['goldpricemanager'].getgoldprice()
+        pricedisplay = f"💰 السعر الحالي: ${goldprice.price}\n📊 التغيير: {goldprice.change24h:+.2f} ({goldprice.changepercentage:+.2f}%)"
+    except:
+        pricedisplay = "💰 السعر: يتم التحديث..."
 
-⚡ أقوى بوت تحليل الذهب في التيليجرام ⚡
-🎯 بتقنية الذكاء الاصطناعي المتقدمة
-
-╔═══════════════════════════════════════╗
-║     🆕 نظام المفاتيح الجديد 🆕      ║
-╚═══════════════════════════════════════╝
-
-📊 كل مفتاح = 100 رسالة تحليل
-🔄 المفتاح ينتهي عند انتهاء الرسائل
-✨ لا حاجة للتجديد اليومي!"""
-
-    is_activated = user.is_activated or user_id == Config.MASTER_USER_ID
+    isactivated = (user.licensekey and user.isactivated) or userid == Config.MASTERUSERID
     
-    if is_activated:
-        # حساب الرسائل المتبقية
-        remaining_messages = 0
-        if user.license_keys and context.bot_data['license_manager']:
-            last_key = user.license_keys[-1]
-            key_info = await context.bot_data['license_manager'].get_key_info(last_key)
-            if key_info:
-                remaining_messages = key_info['remaining_messages']
+    if isactivated:
+        # للمستخدمين المفعلين - ترحيب خاص (HTML بدلاً من Markdown)
+        keyinfo = await context.botdata['licensemanager'].getkeyinfo(user.licensekey) if user.licensekey else None
+        remainingmsgs = keyinfo['remainingtoday'] if keyinfo else "∞"
         
-        welcome_message += f"""
+        welcomemessage = f"""╔══════════════════════════════════════╗
+║     🔥 <b>مرحباً في عالم النخبة</b> 🔥     ║
+╚══════════════════════════════════════╝
 
-╔═══════════════════════════════════════╗
-║    🌟 حسابك مُفعّل ونشط 🌟         ║
-╚═══════════════════════════════════════╝
+👋 أهلاً وسهلاً <b>{update.effectiveuser.firstname}</b>!
 
-✅ يمكنك استخدام جميع الميزات
-📊 الرسائل المتبقية: {remaining_messages if remaining_messages > 0 else "غير محدود"}
+{pricedisplay}
 
-🔥 الكلمة السحرية: "{Config.NIGHTMARE_TRIGGER}"
+┌─────────────────────────────────────┐
+│  ✅ <b>حسابك مُفعَّل ومجهز للعمل</b>   │
+│  🎯 الرسائل المتبقية اليوم: <b>{remainingmsgs}</b>  │
+│  🔄 يتجدد العداد كل 24 ساعة بالضبط    │
+└─────────────────────────────────────┘
 
-اختر من القائمة أدناه:"""
+🎯 <b>اختر نوع التحليل المطلوب:</b>"""
+
+        await update.message.replytext(
+            welcomemessage,
+            replymarkup=createmainkeyboard(user),
+            parsemode=ParseMode.HTML,  # HTML بدلاً من Markdown
+            disablewebpagepreview=True
+        )
     else:
-        welcome_message += """
+        # للمستخدمين غير المفعلين (بدون markdown خطير)
+        welcomemessage = f"""╔══════════════════════════════════════╗
+║   💎 <b>Gold Nightmare Academy</b> 💎   ║
+║     أقوى منصة تحليل الذهب بالعالم     ║
+╚══════════════════════════════════════╝
 
-╔═══════════════════════════════════════╗
-║    🔑 تحتاج إلى مفتاح تفعيل 🔑      ║
-╚═══════════════════════════════════════╝
+👋 مرحباً <b>{update.effectiveuser.firstname}</b>!
 
-للحصول على مفتاح:
-👨‍💼 تواصل مع: @Odai_xau
+{pricedisplay}
 
-🎁 عرض خاص: 100 رسالة لكل مفتاح!
+┌─────────── 🏆 <b>لماذا نحن الأفضل؟</b> ───────────┐
+│                                               │
+│ 🧠 <b>ذكاء اصطناعي متطور</b> - Claude 4 Sonnet   │
+│ 📊 <b>تحليل متعدد الأطر الزمنية</b> بدقة 95%+     │
+│ 🎯 <b>نقاط دخول وخروج</b> بالسنت الواحد          │
+│ 🛡️ <b>إدارة مخاطر احترافية</b> مؤسسية           │
+│ 📈 <b>توقعات مستقبلية</b> مع نسب ثقة دقيقة        │
+│ 🔥 <b>تحليل شامل متقدم</b> للمحترفين              │
+│                                               │
+└───────────────────────────────────────────────┘
 
-💡 استخدم: /activate مفتاح_التفعيل"""
-    
-    await update.message.reply_text(
-        welcome_message,
-        reply_markup=create_main_keyboard(user)
-    )
+🎁 <b>عرض محدود - مفاتيح متاحة الآن!</b>
 
-async def activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+🔑 كل مفتاح يعطيك:
+   ⚡ 3 تحليلات احترافية يومياً
+   🔄 تجديد تلقائي كل 24 ساعة
+   🎯 وصول للتحليل الشامل المتقدم
+   📱 دعم فني مباشر
+
+💡 <b>للحصول على مفتاح التفعيل:</b>
+تواصل مع المطور المختص"""
+
+        keyboard = [
+            [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")],
+            [InlineKeyboardButton("📈 قناة التوصيات", url="https://t.me/odaixauusdt")],
+            [InlineKeyboardButton("💰 سعر الذهب الآن", callbackdata="pricenow")],
+            [InlineKeyboardButton("❓ كيف أحصل على مفتاح؟", callbackdata="howtogetlicense")]
+        ]
+        
+        await update.message.replytext(
+            welcomemessage,
+            replymarkup=InlineKeyboardMarkup(keyboard),
+            parsemode=ParseMode.HTML,  # HTML بدلاً من Markdown
+            disablewebpagepreview=True
+        )
+
+
+async def licensecommand(update: Update, context: ContextTypes.DEFAULTTYPE):
     """أمر تفعيل المفتاح"""
-    user_id = update.effective_user.id
+    userid = update.effectiveuser.id
     
     if not context.args:
-        await update.message.reply_text(
+        await update.message.replytext(
             "🔑 تفعيل مفتاح الترخيص\n\n"
-            "الاستخدام: /activate مفتاح_التفعيل\n\n"
-            "مثال: /activate GOLD-ABC1-DEF2-GHI3"
+            "الاستخدام: /license مفتاحالتفعيل\n\n"
+            "مثال: /license GOLD-ABC1-DEF2-GHI3"
         )
         return
     
-    license_key = context.args[0].upper().strip()
-    license_manager = context.bot_data['license_manager']
+    licensekey = context.args[0].upper().strip()
+    licensemanager = context.botdata['licensemanager']
     
-    # فحص صحة المفتاح
-    is_valid, message = await license_manager.validate_key(license_key, user_id)
+    isvalid, message = await licensemanager.validatekey(licensekey, userid)
     
-    if not is_valid:
-        await update.message.reply_text(f"❌ فشل التفعيل\n\n{message}")
+    if not isvalid:
+        await update.message.replytext(f"❌ فشل التفعيل\n\n{message}")
         return
     
-    # جلب أو إنشاء المستخدم
-    user = await context.bot_data['db'].get_user(user_id)
+    user = await context.botdata['db'].getuser(userid)
     if not user:
         user = User(
-            user_id=user_id,
-            username=update.effective_user.username,
-            first_name=update.effective_user.first_name
+            userid=userid,
+            username=update.effectiveuser.username,
+            firstname=update.effectiveuser.firstname
         )
     
-    # تفعيل المستخدم
-    if license_key not in user.license_keys:
-        user.license_keys.append(license_key)
-    user.is_activated = True
-    user.activation_date = datetime.now()
-    await context.bot_data['db'].add_user(user)
+    user.licensekey = licensekey
+    user.isactivated = True
+    user.activationdate = datetime.now()
+    await context.botdata['db'].adduser(user)
     
-    # ربط المفتاح بالمستخدم
-    context.bot_data['security'].link_user_to_key(user_id, license_key)
+    context.botdata['security'].createsession(userid, licensekey)
     
-    # الحصول على معلومات المفتاح
-    key_info = await license_manager.get_key_info(license_key)
+    keyinfo = await licensemanager.getkeyinfo(licensekey)
     
-    success_message = f"""✅ تم التفعيل بنجاح!
+    successmessage = f"""✅ تم التفعيل بنجاح!
 
-🔑 المفتاح: {license_key[:8]}***
-📊 الرسائل المتاحة: {key_info['remaining_messages']} رسالة
-🎯 جاهز للاستخدام!
+🔑 المفتاح: {licensekey}
+📊 الحد اليومي: {keyinfo['dailylimit']} رسائل
+📈 المتبقي اليوم: {keyinfo['remainingtoday']} رسائل
+⏰ يتجدد العداد كل 24 ساعة تلقائياً بالضبط
 
-🔥 الكلمة السحرية: "{Config.NIGHTMARE_TRIGGER}"
-
-🎉 يمكنك الآن استخدام البوت!"""
+🎉 يمكنك الآن استخدام البوت والحصول على التحليلات المتقدمة!"""
     
-    await update.message.reply_text(
-        success_message,
-        reply_markup=create_main_keyboard(user)
+    await update.message.replytext(
+        successmessage,
+        replymarkup=createmainkeyboard(user)
     )
     
     # حذف الرسالة لحماية المفتاح
@@ -1018,649 +1346,1143 @@ async def activate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-@admin_only
-async def createkeys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إنشاء مفاتيح جديدة (للمشرف)"""
+@adminonly
+async def createkeyscommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """إنشاء مفاتيح جديدة"""
     count = 1
-    messages_per_key = 100
+    dailylimit = 3
     
     if context.args:
         try:
             count = int(context.args[0])
             if len(context.args) > 1:
-                messages_per_key = int(context.args[1])
+                dailylimit = int(context.args[1])
         except ValueError:
-            await update.message.reply_text(
-                "❌ استخدام خاطئ\n\n"
-                "الصيغة: /createkeys [عدد] [رسائل]\n"
-                "مثال: /createkeys 5 100"
-            )
+            await update.message.replytext("❌ استخدم: /createkeys [عدد] [حديومي]\nمثال: /createkeys 10 3")
             return
     
     if count > 50:
-        await update.message.reply_text("❌ لا يمكن إنشاء أكثر من 50 مفتاح")
+        await update.message.replytext("❌ لا يمكن إنشاء أكثر من 50 مفتاح")
         return
     
-    license_manager = context.bot_data['license_manager']
+    licensemanager = context.botdata['licensemanager']
     
-    status_msg = await update.message.reply_text(f"⏳ جاري إنشاء {count} مفتاح...")
+    statusmsg = await update.message.replytext(f"⏳ جاري إنشاء {count} مفتاح...")
     
-    created_keys = []
+    createdkeys = []
     for i in range(count):
-        key = await license_manager.create_new_key(
-            total_messages=messages_per_key,
+        key = await licensemanager.createnewkey(
+            dailylimit=dailylimit,
             notes=f"مفتاح مُنشأ بواسطة المشرف - {datetime.now().strftime('%Y-%m-%d')}"
         )
-        created_keys.append(key)
+        createdkeys.append(key)
     
-    keys_text = "\n".join([f"{i+1}. `{key}`" for i, key in enumerate(created_keys)])
+    keystext = "\n".join([f"{i+1}. {key}" for i, key in enumerate(createdkeys)])
     
-    result_message = f"""✅ تم إنشاء {count} مفتاح بنجاح!
+    resultmessage = f"""✅ تم إنشاء {count} مفتاح بنجاح!
 
-📊 عدد الرسائل لكل مفتاح: {messages_per_key}
+📊 الحد اليومي: {dailylimit} رسائل لكل مفتاح
+⏰ يتجدد كل 24 ساعة بالضبط
+
 🔑 المفاتيح:
-
-{keys_text}
+{keystext}
 
 💡 تعليمات للمستخدمين:
-• كل مفتاح يعطي {messages_per_key} رسالة
-• استخدام: /activate GOLD-XXXX-XXXX-XXXX
-• الكلمة السحرية: "{Config.NIGHTMARE_TRIGGER}\""""
+• كل مفتاح يعطي {dailylimit} رسائل فقط يومياً
+• استخدام: /license GOLD-XXXX-XXXX-XXXX"""
     
-    await status_msg.edit_text(result_message, parse_mode=ParseMode.MARKDOWN)
+    await statusmsg.edittext(resultmessage)
 
-# ==================== Message Handlers ====================
-@require_activation
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الرسائل النصية"""
-    user = context.user_data.get('user')
-    if not user:
+@adminonly
+async def keyscommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """عرض جميع المفاتيح للمشرف"""
+    licensemanager = context.botdata['licensemanager']
+    
+    if not licensemanager.licensekeys:
+        await update.message.replytext("❌ لا توجد مفاتيح")
         return
     
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    # إعداد الرسالة
+    message = "🔑 جميع مفاتيح التفعيل:\n\n"
     
-    is_nightmare = Config.NIGHTMARE_TRIGGER in update.message.text
+    # إحصائيات عامة
+    stats = await licensemanager.getallkeysstats()
+    message += f"📊 الإحصائيات:\n"
+    message += f"• إجمالي المفاتيح: {stats['totalkeys']}\n"
+    message += f"• المفاتيح المستخدمة: {stats['usedkeys']}\n"
+    message += f"• المفاتيح الفارغة: {stats['unusedkeys']}\n"
+    message += f"• الاستخدام اليوم: {stats['todayusage']}\n"
+    message += f"• الاستخدام الإجمالي: {stats['totalusage']}\n\n"
     
-    if is_nightmare:
-        processing_msg = await update.message.reply_text(
-            "🔥🔥🔥 كابوس الذهب 🔥🔥🔥\n\n"
-            "⚡ تحضير التحليل المتقدم الشامل..."
+    # عرض أول 10 مفاتيح مع تفاصيل كاملة
+    count = 0
+    for key, licensekey in licensemanager.licensekeys.items():
+        if count >= 10:  # عرض أول 10 فقط
+            break
+        count += 1
+        
+        status = "🟢 نشط" if licensekey.isactive else "🔴 معطل"
+        userinfo = f"👤 {licensekey.username or 'لا يوجد'} (ID: {licensekey.userid})" if licensekey.userid else "⭕ غير مستخدم"
+        usage = f"{licensekey.usedtoday}/{licensekey.dailylimit}"
+        
+        message += f"{count:2d}. {key}\n"
+        message += f"   {status} | {userinfo}\n"
+        message += f"   📊 الاستخدام: {usage} | إجمالي: {licensekey.totaluses}\n"
+        message += f"   📅 إنشاء: {licensekey.createddate.strftime('%Y-%m-%d')}\n\n"
+    
+    if len(licensemanager.licensekeys) > 10:
+        message += f"... و {len(licensemanager.licensekeys) - 10} مفاتيح أخرى\n\n"
+    
+    message += "💡 استخدم /unusedkeys للمفاتيح المتاحة فقط"
+    
+    await sendlongmessage(update, message)
+
+@adminonly
+async def unusedkeyscommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """عرض المفاتيح غير المستخدمة فقط"""
+    licensemanager = context.botdata['licensemanager']
+    
+    unusedkeys = [key for key, licensekey in licensemanager.licensekeys.items() 
+                   if not licensekey.userid and licensekey.isactive]
+    
+    if not unusedkeys:
+        await update.message.replytext("❌ لا توجد مفاتيح متاحة")
+        return
+    
+    message = f"⭕ المفاتيح المتاحة ({len(unusedkeys)} مفتاح):\n\n"
+    
+    for i, key in enumerate(unusedkeys, 1):
+        licensekey = licensemanager.licensekeys[key]
+        message += f"{i:2d}. {key}\n"
+        message += f"    📊 الحد اليومي: {licensekey.dailylimit} رسائل\n"
+        message += f"    📅 تاريخ الإنشاء: {licensekey.createddate.strftime('%Y-%m-%d')}\n\n"
+    
+    message += f"""💡 تعليمات إعطاء المفاتيح:
+انسخ مفتاح وأرسله للمستخدم مع التعليمات:
+
+```
+🔑 مفتاح التفعيل الخاص بك:
+GOLD-XXXX-XXXX-XXXX
+
+📝 كيفية الاستخدام:
+/license GOLD-XXXX-XXXX-XXXX
+
+⚠️ ملاحظات مهمة:
+• لديك 3 رسائل فقط يومياً
+• يتجدد العداد كل 24 ساعة بالضبط
+```"""
+    
+    await sendlongmessage(update, message)
+
+@adminonly
+async def deleteusercommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """حذف مستخدم من مفتاح"""
+    if not context.args:
+        await update.message.replytext(
+            "🗑️ حذف مستخدم من مفتاح\n\n"
+            "الاستخدام: /deleteuser مفتاحالتفعيل\n\n"
+            "مثال: /deleteuser GOLD-ABC1-DEF2-GHI3"
+        )
+        return
+    
+    licensekey = context.args[0].upper().strip()
+    licensemanager = context.botdata['licensemanager']
+    
+    success, message = await licensemanager.deleteuserbykey(licensekey)
+    
+    await update.message.replytext(message)
+
+@adminonly
+async def backupcommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """إنشاء نسخة احتياطية"""
+    try:
+        dbmanager = context.botdata['db']
+        licensemanager = context.botdata['licensemanager']
+        
+        # إنشاء النسخة الاحتياطية
+        backupdata = {
+            'timestamp': datetime.now().isoformat(),
+            'users': {str(k): {
+                'userid': v.userid,
+                'username': v.username,
+                'firstname': v.firstname,
+                'isactivated': v.isactivated,
+                'activationdate': v.activationdate.isoformat() if v.activationdate else None,
+                'totalrequests': v.totalrequests,
+                'totalanalyses': v.totalanalyses,
+                'licensekey': v.licensekey
+            } for k, v in dbmanager.users.items()},
+            'licensekeys': {k: {
+                'key': v.key,
+                'createddate': v.createddate.isoformat(),
+                'dailylimit': v.dailylimit,
+                'usedtoday': v.usedtoday,
+                'totaluses': v.totaluses,
+                'userid': v.userid,
+                'username': v.username,
+                'isactive': v.isactive
+            } for k, v in licensemanager.licensekeys.items()},
+            'analysescount': len(dbmanager.analyses)
+        }
+        
+        # حفظ في ملف
+        backupfilename = f"backup{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
+        async with aiofiles.open(backupfilename, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(backupdata, ensureascii=False, indent=2))
+        
+        await update.message.replytext(
+            f"✅ تم إنشاء النسخة الاحتياطية\n\n"
+            f"📁 الملف: `{backupfilename}`\n"
+            f"👥 المستخدمين: {len(backupdata['users'])}\n"
+            f"🔑 المفاتيح: {len(backupdata['licensekeys'])}\n"
+            f"📈 التحليلات: {backupdata['analysescount']}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Backup error: {e}")
+        await update.message.replytext(f"❌ خطأ في إنشاء النسخة الاحتياطية: {str(e)}")
+
+@adminonly 
+async def statscommand(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """إحصائيات سريعة للأدمن"""
+    try:
+        dbmanager = context.botdata['db']
+        licensemanager = context.botdata['licensemanager']
+        
+        # إحصائيات أساسية
+        totalusers = len(dbmanager.users)
+        activeusers = len([u for u in dbmanager.users.values() if u.isactivated])
+        totalkeys = len(licensemanager.licensekeys)
+        usedkeys = len([k for k in licensemanager.licensekeys.values() if k.userid])
+        
+        # آخر 24 ساعة
+        last24h = datetime.now() - timedelta(hours=24)
+        recentanalyses = [a for a in dbmanager.analyses if a.timestamp > last24h]
+        nightmareanalyses = [a for a in recentanalyses if a.analysistype == "NIGHTMARE"]
+        
+        # استخدام اليوم
+        todayusage = sum(k.usedtoday for k in licensemanager.licensekeys.values())
+        
+        statstext = f"""📊 إحصائيات سريعة
+
+👥 المستخدمين:
+• الإجمالي: {totalusers}
+• المفعلين: {activeusers}
+• النسبة: {activeusers/totalusers100:.1f}%
+
+🔑 المفاتيح:
+• الإجمالي: {totalkeys}
+• المستخدمة: {usedkeys}
+• المتاحة: {totalkeys - usedkeys}
+
+📈 آخر 24 ساعة:
+• التحليلات: {len(recentanalyses)}
+• التحليلات الخاصة: {len(nightmareanalyses)}
+• الرسائل المستخدمة اليوم: {todayusage}
+
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+        await update.message.replytext(statstext)
+        
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        await update.message.replytext(f"❌ خطأ في الإحصائيات: {str(e)}")
+
+# ==================== Message Handlers ====================
+@requireactivationwithkeyusage("textanalysis")
+async def handletextmessage(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالجة الرسائل النصية"""
+    user = context.userdata['user']
+    
+    # فحص الحد المسموح
+    allowed, message = context.botdata['ratelimiter'].isallowed(user.userid, user)
+    if not allowed:
+        await update.message.replytext(message)
+        return
+    
+    await context.bot.sendchataction(chatid=update.effectivechat.id, action=ChatAction.TYPING)
+    
+    # فحص التحليل السري (بدون إظهار للمستخدم)
+    isnightmare = Config.NIGHTMARETRIGGER in update.message.text
+    
+    if isnightmare:
+        processingmsg = await update.message.replytext(
+            "🔥🔥🔥 تحضير التحليل الشامل المتقدم 🔥🔥🔥\n\n"
+            "⚡ جمع البيانات من جميع الأطر الزمنية...\n"
+            "📊 تحليل المستويات والنماذج الفنية...\n"
+            "🎯 حساب نقاط الدخول والخروج الدقيقة...\n\n"
+            "⏳ التحليل الشامل يحتاج وقت أطول للدقة القصوى..."
         )
     else:
-        processing_msg = await update.message.reply_text("🧠 جاري التحليل الاحترافي...")
+        processingmsg = await update.message.replytext("🧠 جاري التحليل الاحترافي...")
     
     try:
-        price = await context.bot_data['gold_price_manager'].get_gold_price()
+        price = await context.botdata['goldpricemanager'].getgoldprice()
         if not price:
-            await processing_msg.edit_text("❌ لا يمكن الحصول على السعر حالياً.")
+            await processingmsg.edittext("❌ لا يمكن الحصول على السعر حالياً.")
             return
         
-        text_lower = update.message.text.lower()
-        analysis_type = AnalysisType.DETAILED
+        # تحديد نوع التحليل من الكلمات المفتاحية
+        textlower = update.message.text.lower()
+        analysistype = AnalysisType.DETAILED  # افتراضي
         
-        if Config.NIGHTMARE_TRIGGER in update.message.text:
-            analysis_type = AnalysisType.NIGHTMARE
-        elif any(word in text_lower for word in ['سريع', 'بسرعة', 'quick']):
-            analysis_type = AnalysisType.QUICK
-        elif any(word in text_lower for word in ['سكالب', 'scalp']):
-            analysis_type = AnalysisType.SCALPING
+        if Config.NIGHTMARETRIGGER in update.message.text:
+            analysistype = AnalysisType.NIGHTMARE
+        elif any(word in textlower for word in ['سريع', 'بسرعة', 'quick']):
+            analysistype = AnalysisType.QUICK
+        elif any(word in textlower for word in ['سكالب', 'scalp', 'سكالبينغ']):
+            analysistype = AnalysisType.SCALPING
+        elif any(word in textlower for word in ['سوينج', 'swing']):
+            analysistype = AnalysisType.SWING
+        elif any(word in textlower for word in ['توقع', 'مستقبل', 'forecast']):
+            analysistype = AnalysisType.FORECAST
+        elif any(word in textlower for word in ['انعكاس', 'reversal']):
+            analysistype = AnalysisType.REVERSAL
+        elif any(word in textlower for word in ['خبر', 'أخبار', 'news']):
+            analysistype = AnalysisType.NEWS
         
-        result = await context.bot_data['claude_manager'].analyze_gold(
+        result = await context.botdata['claudemanager'].analyzegold(
             prompt=update.message.text,
-            gold_price=price,
-            analysis_type=analysis_type,
-            user_settings=user.settings
+            goldprice=price,
+            analysistype=analysistype,
+            usersettings=user.settings
         )
         
-        await processing_msg.delete()
-        await send_long_message(update, result)
+        await processingmsg.delete()
+        
+        await sendlongmessage(update, result)
         
         # حفظ التحليل
         analysis = Analysis(
-            id=f"{user.user_id}_{datetime.now().timestamp()}",
-            user_id=user.user_id,
+            id=f"{user.userid}{datetime.now().timestamp()}",
+            userid=user.userid,
             timestamp=datetime.now(),
-            analysis_type=analysis_type.value,
+            analysistype=analysistype.value,
             prompt=update.message.text,
             result=result[:500],
-            gold_price=price.price
+            goldprice=price.price
         )
-        await context.bot_data['db'].add_analysis(analysis)
+        await context.botdata['db'].addanalysis(analysis)
         
-        user.total_analyses += 1
-        await context.bot_data['db'].add_user(user)
+        # تحديث إحصائيات المستخدم
+        user.totalrequests += 1
+        user.totalanalyses += 1
+        await context.botdata['db'].adduser(user)
         
     except Exception as e:
         logger.error(f"Error in text analysis: {e}")
-        await processing_msg.edit_text("❌ حدث خطأ أثناء التحليل.")
+        await processingmsg.edittext("❌ حدث خطأ أثناء التحليل.")
 
-@require_activation
-async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@requireactivationwithkeyusage("imageanalysis")
+async def handlephotomessage(update: Update, context: ContextTypes.DEFAULTTYPE):
     """معالجة الصور"""
-    user = context.user_data.get('user')
-    if not user:
+    user = context.userdata['user']
+    
+    # فحص الحد المسموح
+    allowed, message = context.botdata['ratelimiter'].isallowed(user.userid, user)
+    if not allowed:
+        await update.message.replytext(message)
         return
     
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+    await context.bot.sendchataction(chatid=update.effectivechat.id, action=ChatAction.UPLOADPHOTO)
     
+    # فحص إذا كان التحليل السري في التعليق
     caption = update.message.caption or ""
-    is_nightmare = Config.NIGHTMARE_TRIGGER in caption
+    isnightmare = Config.NIGHTMARETRIGGER in caption
     
-    if is_nightmare:
-        processing_msg = await update.message.reply_text(
-            "🔥🔥🔥 تحليل شارت - كابوس الذهب 🔥🔥🔥\n\n"
-            "📸 معالجة الصورة بالذكاء الاصطناعي..."
+    if isnightmare:
+        processingmsg = await update.message.replytext(
+            "🔥🔥🔥 تحليل شارت شامل متقدم 🔥🔥🔥\n\n"
+            "📸 معالجة الصورة بالذكاء الاصطناعي المتقدم...\n"
+            "🔍 تحليل النماذج الفنية والمستويات..."
         )
     else:
-        processing_msg = await update.message.reply_text("📸 جاري تحليل الشارت...")
+        processingmsg = await update.message.replytext("📸 جاري تحليل الشارت بالذكاء الاصطناعي...")
     
     try:
         photo = update.message.photo[-1]
-        photo_file = await photo.get_file()
-        image_data = await photo_file.download_as_bytearray()
+        photofile = await photo.getfile()
+        imagedata = await photofile.downloadasbytearray()
         
-        image_base64 = ImageProcessor.process_image(image_data)
-        if not image_base64:
-            await processing_msg.edit_text("❌ لا يمكن معالجة الصورة.")
+        imagebase64 = ImageProcessor.processimage(imagedata)
+        if not imagebase64:
+            await processingmsg.edittext("❌ لا يمكن معالجة الصورة.")
             return
         
-        price = await context.bot_data['gold_price_manager'].get_gold_price()
+        price = await context.botdata['goldpricemanager'].getgoldprice()
         if not price:
-            await processing_msg.edit_text("❌ لا يمكن الحصول على السعر حالياً.")
+            await processingmsg.edittext("❌ لا يمكن الحصول على السعر حالياً.")
             return
         
-        caption = caption or "حلل هذا الشارت بالتفصيل"
+        caption = caption or "حلل هذا الشارت بالتفصيل الاحترافي"
         
-        analysis_type = AnalysisType.CHART
-        if Config.NIGHTMARE_TRIGGER in caption:
-            analysis_type = AnalysisType.NIGHTMARE
+        # تحديد نوع التحليل
+        analysistype = AnalysisType.CHART
+        if Config.NIGHTMARETRIGGER in caption:
+            analysistype = AnalysisType.NIGHTMARE
         
-        result = await context.bot_data['claude_manager'].analyze_gold(
+        result = await context.botdata['claudemanager'].analyzegold(
             prompt=caption,
-            gold_price=price,
-            image_base64=image_base64,
-            analysis_type=analysis_type,
-            user_settings=user.settings
+            goldprice=price,
+            imagebase64=imagebase64,
+            analysistype=analysistype,
+            usersettings=user.settings
         )
         
-        await processing_msg.delete()
-        await send_long_message(update, result)
+        await processingmsg.delete()
+        
+        await sendlongmessage(update, result)
         
         # حفظ التحليل
         analysis = Analysis(
-            id=f"{user.user_id}_{datetime.now().timestamp()}",
-            user_id=user.user_id,
+            id=f"{user.userid}{datetime.now().timestamp()}",
+            userid=user.userid,
             timestamp=datetime.now(),
-            analysis_type="image",
+            analysistype="image",
             prompt=caption,
             result=result[:500],
-            gold_price=price.price,
-            image_data=image_data[:1000]
+            goldprice=price.price,
+            imagedata=imagedata[:1000]
         )
-        await context.bot_data['db'].add_analysis(analysis)
+        await context.botdata['db'].addanalysis(analysis)
         
-        user.total_analyses += 1
-        await context.bot_data['db'].add_user(user)
+        # تحديث إحصائيات المستخدم
+        user.totalrequests += 1
+        user.totalanalyses += 1
+        await context.botdata['db'].adduser(user)
         
     except Exception as e:
         logger.error(f"Error in photo analysis: {e}")
-        await processing_msg.edit_text("❌ حدث خطأ أثناء تحليل الصورة.")
+        await processingmsg.edittext("❌ حدث خطأ أثناء تحليل الصورة.")
 
-# ==================== Callback Query Handler ====================
-async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الأزرار"""
-    query = update.callback_query
-    await query.answer()
+# ==================== Enhanced Handler Functions ====================
+async def handledemoanalysis(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالج التحليل التجريبي للمستخدمين غير المفعلين"""
+    query = update.callbackquery
+    userid = query.fromuser.id
     
-    data = query.data
-    user_id = query.from_user.id
+    # التحقق من عدد مرات استخدام التجربة (3 مرات كحد أقصى)
+    demousage = context.userdata.get('demousage', 0)
     
-    # فحص الحظر
-    if context.bot_data['security'].is_blocked(user_id):
-        await query.edit_message_text("❌ حسابك محظور.")
-        return
-    
-    # الحصول على المستخدم
-    user = await context.bot_data['db'].get_user(user_id)
-    if not user:
-        user = User(
-            user_id=user_id,
-            username=query.from_user.username,
-            first_name=query.from_user.first_name
-        )
-        await context.bot_data['db'].add_user(user)
-    
-    # الأوامر المسموحة بدون تفعيل
-    allowed_without_license = ["price_now", "how_to_get_license", "back_main"]
-    
-    # فحص التفعيل للأوامر المحمية
-    if (user_id != Config.MASTER_USER_ID and 
-        not user.is_activated and 
-        data not in allowed_without_license):
-        
-        await query.edit_message_text(
-            "🔑 يتطلب مفتاح تفعيل\n\n"
-            "استخدم: /activate مفتاح_التفعيل\n\n"
-            "💬 للحصول على مفتاح: @Odai_xau",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔑 كيف أحصل على مفتاح؟", callback_data="how_to_get_license")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+    if demousage >= 3:
+        await query.editmessagetext(
+            "🚫 انتهت المحاولات التجريبية\n\n"
+            "لقد استخدمت الحد الأقصى من التحليلات التجريبية (3 مرات).\n\n"
+            "🔥 للاستمتاع بتحليلات لا محدودة:\n"
+            "احصل على مفتاح تفعيل من المطور\n\n"
+            "💎 مع المفتاح ستحصل على:\n"
+            "• 3 تحليلات احترافية يومياً\n"
+            "• تجديد تلقائي كل 24 ساعة\n"
+            "• التحليل الشامل المتقدم\n"
+            "• دعم فني مباشر\n\n"
+            "👨‍💼 تواصل مع المطور: @Odaixau",
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
             ])
         )
         return
     
-    # معالجة الأوامر
+    # رسالة التحضير
+    remainingdemos = 3 - demousage
+    await query.editmessagetext(
+        f"🎯 تحليل تجريبي مجاني\n\n"
+        f"⚡ جاري تحضير تحليل احترافي للذهب...\n"
+        f"📊 المحاولات المتبقية: {remainingdemos - 1} من 3\n\n"
+        f"⏳ يرجى الانتظار..."
+    )
+    
     try:
-        if data == "price_now":
-            price = await context.bot_data['gold_price_manager'].get_gold_price()
-            if price:
-                price_text = f"""💰 سعر الذهب اللحظي
-
-🏷️ السعر: ${price.price}
-📈 التغيير: {price.change_24h:.2f} ({price.change_percentage:+.2f}%)
-📊 أعلى 24h: ${price.high_24h}
-📉 أدنى 24h: ${price.low_24h}
-
-⏰ التحديث: {price.timestamp.strftime('%H:%M:%S')}
-📡 المصدر: {price.source}
-
-🔥 اكتب: "{Config.NIGHTMARE_TRIGGER}" للتحليل الخاص"""
-                
-                keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]]
-                await query.edit_message_text(
-                    price_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            else:
-                await query.edit_message_text("❌ لا يمكن الحصول على السعر حالياً.")
+        # الحصول على السعر
+        price = await context.botdata['goldpricemanager'].getgoldprice()
+        if not price:
+            await query.editmessagetext("❌ لا يمكن الحصول على السعر حالياً.")
+            return
         
-        elif data == "how_to_get_license":
-            help_text = """🔑 كيفية الحصول على مفتاح التفعيل
+        # إنشاء تحليل تجريبي مبسط
+        demoprompt = """قدم تحليل سريع احترافي للذهب الآن مع:
+        - توصية واضحة (Buy/Sell/Hold)
+        - سبب قوي واحد
+        - هدف واحد ووقف خسارة
+        - نسبة ثقة
+        - تنسيق جميل ومنظم
+        
+        اجعله مثيراً ومحترفاً ليشجع المستخدم على الحصول على المفتاح للتحليلات المتقدمة"""
+        
+        result = await context.botdata['claudemanager'].analyzegold(
+            prompt=demoprompt,
+            goldprice=price,
+            analysistype=AnalysisType.QUICK
+        )
+        
+        # إضافة رسالة تسويقية للتحليل التجريبي
+        demoresult = f"""🎯 تحليل تجريبي مجاني - Gold Nightmare
 
-💎 Gold Nightmare Bot يقدم أدق تحليلات الذهب!
+{result}
 
-📞 للحصول على مفتاح:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔥 هذا مجرد طعم من قوة التحليلات الكاملة!
+
+💎 مع مفتاح التفعيل ستحصل على:
+⚡ تحليلات متعددة الأنواع (سكالب، سوينج، توقعات)
+📊 تحليل شامل لجميع الأطر الزمنية
+🎯 نقاط دخول وخروج بالسنت الواحد
+🛡️ إدارة مخاطر احترافية
+🔮 توقعات ذكية مع احتماليات
+📰 تحليل تأثير الأخبار
+🔄 اكتشاف نقاط الانعكاس
+🔥 التحليل الشامل المتقدم للمحترفين
+
+📊 المتبقي من المحاولات التجريبية: {remainingdemos - 1} من 3
+
+🚀 انضم لمجتمع النخبة الآن!"""
+
+        await query.editmessagetext(
+            demoresult,
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔑 احصل على مفتاح", callbackdata="howtogetlicense")],
+                [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")],
+                [InlineKeyboardButton("🔙 رجوع للقائمة", callbackdata="backmain")]
+            ])
+        )
+        
+        # تحديث عداد الاستخدام التجريبي
+        context.userdata['demousage'] = demousage + 1
+        
+    except Exception as e:
+        logger.error(f"Error in demo analysis: {e}")
+        await query.editmessagetext(
+            "❌ حدث خطأ في التحليل التجريبي.\n\n"
+            "🔄 يمكنك المحاولة مرة أخرى أو التواصل مع الدعم.",
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 محاولة أخرى", callbackdata="demoanalysis")],
+                [InlineKeyboardButton("📞 الدعم", url="https://t.me/Odaixau")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
+            ])
+        )
+
+async def handlenightmareanalysis(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالج التحليل الشامل المتقدم"""
+    query = update.callbackquery
+    user = context.userdata.get('user')
+    
+    if not user or not user.isactivated:
+        await query.answer("🔒 يتطلب مفتاح تفعيل", showalert=True)
+        return
+    
+    # فحص واستخدام المفتاح
+    licensemanager = context.botdata['licensemanager']
+    success, message = await licensemanager.usekey(
+        user.licensekey, 
+        user.userid,
+        user.username,
+        "nightmareanalysis"
+    )
+    
+    if not success:
+        await query.editmessagetext(message)
+        return
+    
+    # رسالة تحضير خاصة للتحليل الشامل
+    await query.editmessagetext(
+        "🔥🔥🔥 التحليل الشامل المتقدم 🔥🔥🔥\n\n"
+        "⚡ تحضير التحليل الشامل المتقدم...\n"
+        "🔬 تحليل جميع الأطر الزمنية...\n"
+        "📊 حساب مستويات الدعم والمقاومة...\n"
+        "🎯 تحديد نقاط الدخول الدقيقة...\n"
+        "🛡️ إعداد استراتيجيات إدارة المخاطر...\n"
+        "🔮 حساب التوقعات والاحتماليات...\n\n"
+        "⏳ هذا التحليل يستغرق وقتاً أطول لضمان الدقة..."
+    )
+    
+    try:
+        price = await context.botdata['goldpricemanager'].getgoldprice()
+        if not price:
+            await query.editmessagetext("❌ لا يمكن الحصول على السعر حالياً.")
+            return
+        
+        # التحليل الشامل المتقدم
+        nightmareprompt = f"""أريد التحليل الشامل المتقدم للذهب - التحليل الأكثر تقدماً وتفصيلاً مع:
+
+        1. تحليل شامل لجميع الأطر الزمنية (M5, M15, H1, H4, D1) مع نسب ثقة دقيقة
+        2. مستويات دعم ومقاومة متعددة مع قوة كل مستوى
+        3. نقاط دخول وخروج بالسنت الواحد مع أسباب كل نقطة
+        4. سيناريوهات متعددة (صاعد، هابط، عرضي) مع احتماليات
+        5. استراتيجيات سكالبينج وسوينج
+        6. تحليل نقاط الانعكاس المحتملة
+        7. مناطق العرض والطلب المؤسسية
+        8. توقعات قصيرة ومتوسطة المدى
+        9. إدارة مخاطر تفصيلية
+        10. جداول منظمة وتنسيق احترافي
+
+        {Config.NIGHTMARETRIGGER}
+        
+        اجعله التحليل الأقوى والأشمل على الإطلاق!"""
+        
+        result = await context.botdata['claudemanager'].analyzegold(
+            prompt=nightmareprompt,
+            goldprice=price,
+            analysistype=AnalysisType.NIGHTMARE,
+            usersettings=user.settings
+        )
+        
+        # إضافة توقيع خاص للتحليل الشامل
+        nightmareresult = f"""{result}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 تم بواسطة Gold Nightmare Academy 🔥
+💎 التحليل الشامل المتقدم - للمحترفين فقط
+⚡ تحليل متقدم بالذكاء الاصطناعي Claude 4
+🎯 دقة التحليل: 95%+ - مضمون الجودة
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ تنبيه هام: هذا تحليل تعليمي متقدم وليس نصيحة استثمارية
+💡 استخدم إدارة المخاطر دائماً ولا تستثمر أكثر مما تستطيع خسارته"""
+
+        await query.editmessagetext(nightmareresult)
+        
+    except Exception as e:
+        logger.error(f"Error in nightmare analysis: {e}")
+        await query.editmessagetext("❌ حدث خطأ في التحليل الشامل.")
+
+async def handleenhancedpricedisplay(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالج عرض السعر المحسن"""
+    query = update.callbackquery
+    
+    try:
+        price = await context.botdata['goldpricemanager'].getgoldprice()
+        if not price:
+            await query.editmessagetext("❌ لا يمكن الحصول على السعر حالياً.")
+            return
+        
+        # تحديد اتجاه السعر
+        if price.change24h > 0:
+            trendemoji = "📈"
+            trendcolor = "🟢"
+            trendtext = "صاعد"
+        elif price.change24h < 0:
+            trendemoji = "📉"
+            trendcolor = "🔴"
+            trendtext = "هابط"
+        else:
+            trendemoji = "➡️"
+            trendcolor = "🟡"
+            trendtext = "مستقر"
+        
+        # إنشاء رسالة السعر المتقدمة
+        pricemessage = f"""╔══════════════════════════════════════╗
+║       💰 سعر الذهب المباشر 💰       ║
+╚══════════════════════════════════════╝
+
+💎 السعر الحالي: ${price.price:.2f}
+{trendcolor} الاتجاه: {trendtext} {trendemoji}
+📊 التغيير 24س: {price.change24h:+.2f} ({price.changepercentage:+.2f}%)
+
+🔝 أعلى سعر: ${price.high24h:.2f}
+🔻 أدنى سعر: ${price.low24h:.2f}
+⏰ التحديث: {price.timestamp.strftime('%H:%M:%S')}
+
+💡 للحصول على تحليل متقدم استخدم الأزرار أدناه"""
+        
+        # أزرار تفاعلية للسعر
+        pricekeyboard = [
+            [
+                InlineKeyboardButton("🔄 تحديث السعر", callbackdata="pricenow"),
+                InlineKeyboardButton("⚡ تحليل سريع", callbackdata="analysisquick")
+            ],
+            [
+                InlineKeyboardButton("📊 تحليل شامل", callbackdata="analysisdetailed")
+            ],
+            [
+                InlineKeyboardButton("🔙 رجوع للقائمة", callbackdata="backmain")
+            ]
+        ]
+        
+        await query.editmessagetext(
+            pricemessage,
+            replymarkup=InlineKeyboardMarkup(pricekeyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in price display: {e}")
+        await query.editmessagetext("❌ خطأ في جلب بيانات السعر")
+
+async def handleenhancedkeyinfo(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالج معلومات المفتاح المحسن"""
+    query = update.callbackquery
+    user = context.userdata.get('user')
+    
+    if not user or not user.licensekey:
+        await query.editmessagetext(
+            "❌ لا يوجد مفتاح مفعل\n\n"
+            "للحصول على مفتاح تفعيل تواصل مع المطور",
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
+            ])
+        )
+        return
+    
+    try:
+        keyinfo = await context.botdata['licensemanager'].getkeyinfo(user.licensekey)
+        if not keyinfo:
+            await query.editmessagetext("❌ لا يمكن جلب معلومات المفتاح")
+            return
+        
+        keyinfomessage = f"""╔══════════════════════════════════════╗
+║        🔑 معلومات مفتاح التفعيل 🔑        ║
+╚══════════════════════════════════════╝
+
+🆔 المعرف: {keyinfo['username'] or 'غير محدد'}
+🏷️ المفتاح: `{keyinfo['key'][:8]}`
+📅 تاريخ التفعيل: {keyinfo['createddate']}
+
+📈 الاستخدام: {keyinfo['usedtoday']}/{keyinfo['dailylimit']} رسائل
+📉 المتبقي: {keyinfo['remainingtoday']} رسائل
+🔢 إجمالي الاستخدام: {keyinfo['totaluses']} رسالة
+
+💎 Gold Nightmare Academy - عضوية نشطة
+🚀 أنت جزء من مجتمع النخبة في تحليل الذهب!"""
+        
+        await query.editmessagetext(
+            keyinfomessage,
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 تحديث المعلومات", callbackdata="keyinfo")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
+            ])
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in enhanced key info: {e}")
+        await query.editmessagetext("❌ خطأ في جلب معلومات المفتاح")
+
+# ==================== Callback Query Handler ====================
+async def handlecallbackquery(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالجة الأزرار"""
+    query = update.callbackquery
+    await query.answer()
+    
+    data = query.data
+    userid = query.fromuser.id
+    
+    # فحص الحظر
+    if context.botdata['security'].isblocked(userid):
+        await query.editmessagetext("❌ حسابك محظور.")
+        return
+    
+    # الحصول على بيانات المستخدم
+    user = await context.botdata['db'].getuser(userid)
+    if not user:
+        user = User(
+            userid=userid,
+            username=query.fromuser.username,
+            firstname=query.fromuser.firstname
+        )
+        await context.botdata['db'].adduser(user)
+    
+    # الأوامر المسموحة بدون تفعيل
+    allowedwithoutlicense = ["pricenow", "howtogetlicense", "backmain", "demoanalysis"]
+    
+    # فحص التفعيل للأوامر المحمية
+    if (userid != Config.MASTERUSERID and 
+        (not user.licensekey or not user.isactivated) and 
+        data not in allowedwithoutlicense):
+        
+        notactivatedmessage = f"""🔑 يتطلب مفتاح تفعيل
+
+لاستخدام هذه الميزة، يجب إدخال مفتاح تفعيل صالح.
+استخدم: /license مفتاحالتفعيل
+
+💡 للحصول على مفتاح تواصل مع:
+👨‍💼 Odai - @Odaixau
+
+🔥 مع كل مفتاح ستحصل على تحليلات متقدمة احترافية!"""
+        
+        await query.editmessagetext(
+            notactivatedmessage,
+            replymarkup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔑 كيف أحصل على مفتاح؟", callbackdata="howtogetlicense")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
+            ])
+        )
+        return
+    
+    # فحص استخدام المفتاح للعمليات المتقدمة
+    advancedoperations = [
+        "analysisquick", "analysisscalping", "analysisdetailed",
+        "analysisforecast", "analysisnews", "analysisswing", "analysisreversal"
+    ]
+    
+    if userid != Config.MASTERUSERID and data in advancedoperations and user.licensekey:
+        licensemanager = context.botdata['licensemanager']
+        success, usemessage = await licensemanager.usekey(
+            user.licensekey, 
+            userid,
+            user.username,
+            f"callback{data}"
+        )
+        
+        if not success:
+            await query.editmessagetext(usemessage)
+            return
+    
+    try:
+        if data == "demoanalysis":
+            await handledemoanalysis(update, context)
+
+        elif data == "nightmareanalysis": 
+            await handlenightmareanalysis(update, context)
+
+        elif data == "pricenow":
+            await handleenhancedpricedisplay(update, context)
+            
+        elif data == "howtogetlicense":
+            helptext = f"""🔑 كيفية الحصول على مفتاح التفعيل
+
+💎 Gold Nightmare Bot يقدم تحليلات الذهب الأكثر دقة في العالم!
+
+📞 للحصول على مفتاح تفعيل:
+
 👨‍💼 تواصل مع Odai:
-- Telegram: @Odai_xau
-- Channel: @odai_xauusdt
-- Group: @odai_xau_usd
+- Telegram: @Odaixau
+- Channel: @odaixauusdt  
+- Group: @odaixauusd
 
 🎁 ماذا تحصل عليه:
-• 100 رسالة تحليل احترافية
-• تحليل بالذكاء الاصطناعي المتقدم
-• تحليل متعدد الأطر الزمنية
-• نقاط دخول وخروج دقيقة
-• إدارة مخاطر احترافية
-• الكلمة السحرية: "{Config.NIGHTMARE_TRIGGER}"
+- ⚡ 3 تحليلات احترافية يومياً
+- 🧠 تحليل بالذكاء الاصطناعي المتقدم
+- 📊 تحليل متعدد الأطر الزمنية
+- 🔍 اكتشاف النماذج الفنية
+- 🎯 نقاط دخول وخروج دقيقة
+- 🛡️ إدارة مخاطر احترافية
+- 🔥 التحليل الشامل المتقدم
 
 💰 سعر خاص ومحدود!
+🔄 تجديد تلقائي كل 24 ساعة بالضبط
 
 🌟 انضم لمجتمع النخبة الآن!"""
 
             keyboard = [
-                [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odai_xau")],
-                [InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]
+                [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odaixau")],
+                [InlineKeyboardButton("📈 قناة التوصيات", url="https://t.me/odaixauusdt")],
+                [InlineKeyboardButton("🔙 رجوع", callbackdata="backmain")]
             ]
             
-            await query.edit_message_text(
-                help_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
+            await query.editmessagetext(
+                helptext,
+                replymarkup=InlineKeyboardMarkup(keyboard)
             )
-        
-        elif data == "key_info":
-            if user and user.license_keys:
-                last_key = user.license_keys[-1]
-                key_info = await context.bot_data['license_manager'].get_key_info(last_key)
-                if key_info:
-                    info_text = f"""🔑 معلومات المفتاح
 
-🔐 المفتاح: {key_info['key'][:8]}***
-📊 إجمالي الرسائل: {key_info['total_messages']}
-📈 المستخدم: {key_info['used_messages']}
-📉 المتبقي: {key_info['remaining_messages']}
-📅 تاريخ الإنشاء: {key_info['created_date']}
-✅ الحالة: {'نشط' if key_info['is_active'] else 'منتهي'}
-
-🔥 "{Config.NIGHTMARE_TRIGGER}" للتحليل الخاص"""
-                else:
-                    info_text = "❌ لا يمكن جلب معلومات المفتاح"
-            else:
-                info_text = "❌ لا يوجد مفتاح مُفعّل"
-            
-            keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="back_main")]]
-            await query.edit_message_text(
-                info_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        
-        elif data == "back_main":
-            main_message = f"""🆕 Gold Nightmare Bot
-
-🔥 الكلمة السحرية: "{Config.NIGHTMARE_TRIGGER}"
+        elif data == "keyinfo":
+            await handleenhancedkeyinfo(update, context)
+                        
+        elif data == "backmain":
+            mainmessage = f"""🏆 Gold Nightmare Bot
 
 اختر الخدمة المطلوبة:"""
             
-            await query.edit_message_text(
-                main_message,
-                reply_markup=create_main_keyboard(user)
+            await query.editmessagetext(
+                mainmessage,
+                replymarkup=createmainkeyboard(user)
             )
         
-        elif data.startswith("analysis_"):
-            # فحص واستخدام المفتاح للتحليلات
-            if user_id != Config.MASTER_USER_ID and user.license_keys:
-                license_manager = context.bot_data['license_manager']
-                last_key = user.license_keys[-1]
-                success, message = await license_manager.use_key(last_key, user_id, user.username)
-                
-                if not success:
-                    await query.edit_message_text(
-                        f"{message}\n\n🔑 تحتاج إلى مفتاح جديد"
-                    )
-                    return
-            
-            # معالجة التحليلات
-            analysis_type_map = {
-                "analysis_quick": (AnalysisType.QUICK, "⚡ تحليل سريع"),
-                "analysis_scalping": (AnalysisType.SCALPING, "🎯 سكالبينج"),
-                "analysis_detailed": (AnalysisType.DETAILED, "📊 تحليل مفصل"),
-                "analysis_swing": (AnalysisType.SWING, "📈 سوينج"),
-                "analysis_forecast": (AnalysisType.FORECAST, "🔮 توقعات"),
-                "analysis_reversal": (AnalysisType.REVERSAL, "🔄 مناطق انعكاس"),
-                "analysis_news": (AnalysisType.NEWS, "📰 تحليل الأخبار")
+        elif data.startswith("analysis"):
+            analysistypemap = {
+                "analysisquick": (AnalysisType.QUICK, "⚡ تحليل سريع"),
+                "analysisscalping": (AnalysisType.SCALPING, "🎯 سكالبينج"),
+                "analysisdetailed": (AnalysisType.DETAILED, "📊 تحليل مفصل"),
+                "analysisswing": (AnalysisType.SWING, "📈 سوينج"),
+                "analysisforecast": (AnalysisType.FORECAST, "🔮 توقعات"),
+                "analysisreversal": (AnalysisType.REVERSAL, "🔄 مناطق انعكاس"),
+                "analysisnews": (AnalysisType.NEWS, "📰 تحليل الأخبار")
             }
             
-            if data in analysis_type_map:
-                analysis_type, type_name = analysis_type_map[data]
+            if data in analysistypemap:
+                analysistype, typename = analysistypemap[data]
                 
-                processing_msg = await query.edit_message_text(
-                    f"🧠 جاري إعداد {type_name}...\n\n⏳ يرجى الانتظار..."
+                processingmsg = await query.editmessagetext(
+                    f"🧠 جاري إعداد {typename}...\n\n⏳ يرجى الانتظار..."
                 )
                 
-                price = await context.bot_data['gold_price_manager'].get_gold_price()
+                price = await context.botdata['goldpricemanager'].getgoldprice()
                 if not price:
-                    await processing_msg.edit_text("❌ لا يمكن الحصول على السعر حالياً.")
+                    await processingmsg.edittext("❌ لا يمكن الحصول على السعر حالياً.")
                     return
                 
-                prompt = f"تحليل {type_name} للذهب"
+                # إنشاء prompt مناسب لنوع التحليل
+                if analysistype == AnalysisType.QUICK:
+                    prompt = "تحليل سريع للذهب الآن مع توصية واضحة"
+                elif analysistype == AnalysisType.SCALPING:
+                    prompt = "تحليل سكالبينج للذهب للـ 15 دقيقة القادمة مع نقاط دخول وخروج دقيقة"
+                elif analysistype == AnalysisType.SWING:
+                    prompt = "تحليل سوينج للذهب للأيام والأسابيع القادمة"
+                elif analysistype == AnalysisType.FORECAST:
+                    prompt = "توقعات الذهب لليوم والأسبوع القادم مع احتماليات"
+                elif analysistype == AnalysisType.REVERSAL:
+                    prompt = "تحليل نقاط الانعكاس المحتملة للذهب مع مستويات الدعم والمقاومة"
+                elif analysistype == AnalysisType.NEWS:
+                    prompt = "تحليل تأثير الأخبار الحالية على الذهب"
+                else:
+                    prompt = "تحليل شامل ومفصل للذهب مع جداول منظمة"
                 
-                result = await context.bot_data['claude_manager'].analyze_gold(
+                result = await context.botdata['claudemanager'].analyzegold(
                     prompt=prompt,
-                    gold_price=price,
-                    analysis_type=analysis_type,
-                    user_settings=user.settings
+                    goldprice=price,
+                    analysistype=analysistype,
+                    usersettings=user.settings
                 )
                 
-                await processing_msg.edit_text(result)
+                await processingmsg.edittext(result)
                 
                 # حفظ التحليل
                 analysis = Analysis(
-                    id=f"{user.user_id}_{datetime.now().timestamp()}",
-                    user_id=user.user_id,
+                    id=f"{user.userid}{datetime.now().timestamp()}",
+                    userid=user.userid,
                     timestamp=datetime.now(),
-                    analysis_type=data,
+                    analysistype=data,
                     prompt=prompt,
                     result=result[:500],
-                    gold_price=price.price
+                    goldprice=price.price
                 )
-                await context.bot_data['db'].add_analysis(analysis)
+                await context.botdata['db'].addanalysis(analysis)
                 
-                keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_main")]]
-                await query.edit_message_reply_markup(
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                # إضافة زر رجوع
+                keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة", callbackdata="backmain")]]
+                await query.editmessagereplymarkup(
+                    replymarkup=InlineKeyboardMarkup(keyboard)
                 )
         
-        elif data == "admin_panel" and user_id == Config.MASTER_USER_ID:
-            await query.edit_message_text(
-                "👨‍💼 **لوحة الإدارة**\n\nاختر العملية المطلوبة:",
-                reply_markup=create_admin_keyboard()
+        elif data == "adminpanel" and userid == Config.MASTERUSERID:
+            await query.editmessagetext(
+                "👨‍💼 لوحة الإدارة\n\nاختر العملية المطلوبة:",
+                replymarkup=createadminkeyboard()
             )
         
-        elif data == "admin_stats" and user_id == Config.MASTER_USER_ID:
-            db_stats = await context.bot_data['db'].get_stats()
-            license_stats = await context.bot_data['license_manager'].get_all_keys_stats()
-            
-            stats_text = f"""📊 **إحصائيات النظام**
-
-🔑 **المفاتيح:**
-• إجمالي: {license_stats['total_keys']}
-• نشطة: {license_stats['active_keys']}
-• مستخدمة: {license_stats['used_keys']}
-• منتهية: {license_stats['exhausted_keys']}
-
-📊 **الرسائل:**
-• الإجمالي: {license_stats['total_messages']}
-• المستخدمة: {license_stats['used_messages']}
-• المتبقية: {license_stats['remaining_messages']}
-
-👥 **المستخدمين:**
-• الإجمالي: {db_stats['total_users']}
-• النشطين: {db_stats['active_users']}
-
-📈 **التحليلات:**
-• الإجمالي: {db_stats['total_analyses']}
-• آخر 24 ساعة: {db_stats['analyses_24h']}"""
-
-            keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
-            await query.edit_message_text(
-                stats_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        
-        elif data == "admin_create_keys" and user_id == Config.MASTER_USER_ID:
-            await query.edit_message_text(
-                "➕ **إنشاء مفاتيح جديدة**\n\n"
-                "استخدم الأمر:\n"
-                "`/createkeys [عدد] [رسائل]`\n\n"
-                "مثال:\n"
-                "`/createkeys 5 100` - 5 مفاتيح بـ 100 رسالة\n"
-                "`/createkeys 10 50` - 10 مفاتيح بـ 50 رسالة",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]
-                ])
-            )
-        
-        elif data == "admin_show_keys" and user_id == Config.MASTER_USER_ID:
-            license_manager = context.bot_data['license_manager']
-            
-            if not license_manager.license_keys:
-                message = "❌ لا توجد مفاتيح"
-            else:
-                message = f"🔑 **المفاتيح ({len(license_manager.license_keys)}):**\n\n"
-                
-                count = 0
-                for key, license_key in license_manager.license_keys.items():
-                    if count >= 10:
-                        break
-                    count += 1
-                    
-                    status = "🟢" if license_key.is_active else "🔴"
-                    user_status = f"{license_key.username or 'N/A'}" if license_key.user_id else "متاح"
-                    usage = f"{license_key.used_messages}/{license_key.total_messages}"
-                    
-                    message += f"{count}. `{key[:12]}***`\n"
-                    message += f"   {status} {user_status} | {usage}\n\n"
-                
-                if len(license_manager.license_keys) > 10:
-                    message += f"... و {len(license_manager.license_keys) - 10} مفاتيح أخرى"
-            
-            keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
-            await query.edit_message_text(
-                message,
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup(keyboard)
+        else:
+            await query.editmessagetext(
+                "❌ خيار غير معروف. استخدم /start للعودة للقائمة الرئيسية."
             )
         
     except Exception as e:
         logger.error(f"Error in callback query '{data}': {e}")
-        await query.edit_message_text(
+        await query.editmessagetext(
             "❌ حدث خطأ تقني.\n\nاستخدم /start للمتابعة."
         )
 
-# ==================== Flask Server for Webhook ====================
-def create_flask_app(application):
-    """إنشاء Flask app للـ webhook"""
-    app = Flask(__name__)
+# ==================== Admin Message Handler ====================
+async def handleadminmessage(update: Update, context: ContextTypes.DEFAULTTYPE):
+    """معالج رسائل الأدمن للعمليات الخاصة"""
+    userid = update.effectiveuser.id
     
-    @app.route('/')
-    def home():
-        return "Gold Nightmare Bot is running! 🔥", 200
+    # فقط للمشرف
+    if userid != Config.MASTERUSERID:
+        return
     
-    @app.route('/health')
-    def health():
-        return {"status": "healthy", "bot": "Gold Nightmare", "version": "7.0"}, 200
+    adminaction = context.userdata.get('adminaction')
     
-    @app.route(Config.WEBHOOK_PATH, methods=['POST'])
-    async def webhook():
-        """استقبال webhook من Telegram"""
-        try:
-            json_data = request.get_json()
-            update = Update.de_json(json_data, application.bot)
-            
-            # معالجة التحديث بشكل غير متزامن
-            await application.process_update(update)
-            
-            return "OK", 200
-        except Exception as e:
-            logger.error(f"Webhook error: {e}")
-            return "Error", 500
-    
-    return app
+    if adminaction == 'broadcast':
+        # إرسال رسالة جماعية
+        broadcasttext = update.message.text
+        
+        if broadcasttext.lower() == '/cancel':
+            context.userdata.pop('adminaction', None)
+            await update.message.replytext("❌ تم إلغاء الرسالة الجماعية.")
+            return
+        
+        dbmanager = context.botdata['db']
+        activeusers = [u for u in dbmanager.users.values() if u.isactivated]
+        
+        statusmsg = await update.message.replytext(f"📤 جاري الإرسال لـ {len(activeusers)} مستخدم...")
+        
+        successcount = 0
+        failedcount = 0
+        
+        broadcastmessage = f"""📢 رسالة من إدارة Gold Nightmare
 
-# ==================== Main Function ====================
-async def main():
-    """الدالة الرئيسية"""
+{broadcasttext}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+💎 Gold Nightmare Academy"""
+        
+        for user in activeusers:
+            try:
+                await context.bot.sendmessage(
+                    chatid=user.userid,
+                    text=broadcastmessage
+                )
+                successcount += 1
+                await asyncio.sleep(0.1)  # تجنب spam limits
+            except Exception as e:
+                failedcount += 1
+                logger.error(f"Failed to send broadcast to {user.userid}: {e}")
+        
+        await statusmsg.edittext(
+            f"✅ اكتملت الرسالة الجماعية\n\n"
+            f"📤 تم الإرسال لـ: {successcount} مستخدم\n"
+            f"❌ فشل الإرسال لـ: {failedcount} مستخدم\n\n"
+            f"📊 معدل النجاح: {successcount/(successcount+failedcount)100:.1f}%"
+        )
+        
+        context.userdata.pop('adminaction', None)
+
+# ==================== Error Handler ====================
+async def errorhandler(update: object, context: ContextTypes.DEFAULTTYPE) -> None:
+    """معالج الأخطاء المحسن"""
+    logger.error(f"Exception while handling an update: {context.error}")
+    
+    # إذا كان الخطأ في parsing، حاول إرسال رسالة بديلة
+    if "Can't parse entities" in str(context.error):
+        try:
+            if update and hasattr(update, 'message') and update.message:
+                await update.message.replytext(
+                    "❌ حدث خطأ في تنسيق الرسالة. تم إرسال النص بدون تنسيق.\n"
+                    "استخدم /start للمتابعة."
+                )
+        except:
+            pass  # تجنب إرسال أخطاء إضافية
+# ==================== Main Function for Render Webhook ====================
+async def setupwebhook():
+    """إعداد webhook وحذف أي polling سابق"""
+    try:
+        # حذف أي webhook سابق
+        await application.bot.deletewebhook(droppendingupdates=True)
+        
+        # تعيين webhook الجديد
+        webhookurl = f"{Config.WEBHOOKURL}/webhook"
+        await application.bot.setwebhook(webhookurl)
+        
+        print(f"✅ تم تعيين Webhook: {webhookurl}")
+        
+    except Exception as e:
+        print(f"❌ خطأ في إعداد Webhook: {e}")
+
+def main():
+    """الدالة الرئيسية لـ Render Webhook"""
     
     # التحقق من متغيرات البيئة
-    if not Config.TELEGRAM_BOT_TOKEN:
-        logger.error("❌ TELEGRAM_BOT_TOKEN not found")
+    if not Config.TELEGRAMBOTTOKEN:
+        print("❌ خطأ: TELEGRAMBOTTOKEN غير موجود")
         return
     
-    if not Config.CLAUDE_API_KEY:
-        logger.error("❌ CLAUDE_API_KEY not found")
+    if not Config.CLAUDEAPIKEY:
+        print("❌ خطأ: CLAUDEAPIKEY غير موجود")
         return
     
-    # تحديد URL للـ webhook
-    if not Config.RENDER_APP_URL:
-        Config.RENDER_APP_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', 'localhost')}"
-    
-    webhook_url = f"{Config.RENDER_APP_URL}{Config.WEBHOOK_PATH}"
-    
-    logger.info("🚀 Starting Gold Nightmare Bot (Webhook Version)...")
-    logger.info(f"🔥 Magic word: '{Config.NIGHTMARE_TRIGGER}'")
-    logger.info(f"🌐 Webhook URL: {webhook_url}")
+    print("🚀 تشغيل Gold Nightmare Bot على Render...")
+    print("🔗 إعداد Webhook للعمل على Render")
     
     # إنشاء التطبيق
-    application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
+    global application
+    application = Application.builder().token(Config.TELEGRAMBOTTOKEN).build()
     
     # إنشاء المكونات
-    cache_manager = CacheManager()
-    db_manager = DatabaseManager(Config.DB_PATH)
-    license_manager = LicenseManager(Config.KEYS_FILE)
-    gold_price_manager = GoldPriceManager(cache_manager)
-    claude_manager = ClaudeAIManager(cache_manager)
-    security_manager = SecurityManager()
+    cachemanager = CacheManager()
+    dbmanager = DatabaseManager(Config.DBPATH)
+    licensemanager = LicenseManager(Config.KEYSFILE)
+    goldpricemanager = GoldPriceManager(cachemanager)
+    claudemanager = ClaudeAIManager(cachemanager)
+    ratelimiter = RateLimiter()
+    securitymanager = SecurityManager()
     
     # تحميل البيانات
-    await db_manager.load_data()
-    await license_manager.initialize()
+    async def initializedata():
+        await dbmanager.loaddata()
+        await licensemanager.initialize()
     
-    # حفظ في bot_data
-    application.bot_data.update({
-        'db': db_manager,
-        'license_manager': license_manager,
-        'gold_price_manager': gold_price_manager,
-        'claude_manager': claude_manager,
-        'security': security_manager,
-        'cache': cache_manager
+    # تشغيل تحميل البيانات
+    asyncio.geteventloop().rununtilcomplete(initializedata())
+    
+    # حفظ في botdata
+    application.botdata.update({
+        'db': dbmanager,
+        'licensemanager': licensemanager,
+        'goldpricemanager': goldpricemanager,
+        'claudemanager': claudemanager,
+        'ratelimiter': ratelimiter,
+        'security': securitymanager,
+        'cache': cachemanager
     })
     
     # إضافة المعالجات
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("activate", activate_command))
-    application.add_handler(CommandHandler("createkeys", createkeys_command))
+    application.addhandler(CommandHandler("start", startcommand))
+    application.addhandler(CommandHandler("license", licensecommand))
+    application.addhandler(CommandHandler("createkeys", createkeyscommand))
+    application.addhandler(CommandHandler("keys", keyscommand))
+    application.addhandler(CommandHandler("unusedkeys", unusedkeyscommand))
+    application.addhandler(CommandHandler("deleteuser", deleteusercommand))
+    application.addhandler(CommandHandler("backup", backupcommand))
+    application.addhandler(CommandHandler("stats", statscommand))
     
     # معالجات الرسائل
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))
+    application.addhandler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(Config.MASTERUSERID), handleadminmessage))
+    application.addhandler(MessageHandler(filters.TEXT & ~filters.COMMAND, handletextmessage))
+    application.addhandler(MessageHandler(filters.PHOTO, handlephotomessage))
     
     # معالج الأزرار
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    application.addhandler(CallbackQueryHandler(handlecallbackquery))
     
-    # تهيئة التطبيق
-    await application.initialize()
+    # معالج الأخطاء
+    application.adderrorhandler(errorhandler)
+    
+    print("✅ جاهز للعمل!")
+    print(f"📊 تم تحميل {len(licensemanager.licensekeys)} مفتاح تفعيل")
+    print(f"👥 تم تحميل {len(dbmanager.users)} مستخدم")
+    print("="*50)
+    print("🌐 البوت يعمل على Render مع Webhook...")
     
     # إعداد webhook
+    asyncio.geteventloop().rununtilcomplete(setupwebhook())
+    
+    # تشغيل webhook على Render
+    port = int(os.getenv("PORT", "10000"))
+    webhookurl = Config.WEBHOOKURL or "https://your-app-name.onrender.com"
+    
+    print(f"🔗 Webhook URL: {webhookurl}/webhook")
+    print(f"🚀 استمع على المنفذ: {port}")
+    
     try:
-        await application.bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
-        logger.info(f"✅ Webhook set successfully: {webhook_url}")
-    except Exception as e:
-        logger.error(f"❌ Failed to set webhook: {e}")
-        return
-    
-    # إنشاء Flask app
-    flask_app = create_flask_app(application)
-    
-    logger.info(f"✅ Bot initialized successfully!")
-    logger.info(f"📊 Loaded {len(license_manager.license_keys)} keys")
-    logger.info(f"👥 Loaded {len(db_manager.users)} users")
-    logger.info(f"🎯 Each key gives 100 messages by default")
-    logger.info("="*50)
-    logger.info(f"🌐 Server running on port {Config.PORT}")
-    logger.info("🤖 Bot is ready to receive webhooks...")
-    
-    # تشغيل Flask server
-    try:
-        flask_app.run(
-            host='0.0.0.0',
-            port=Config.PORT,
-            debug=False
+        application.runwebhook(
+            listen="0.0.0.0",
+            port=port,
+            urlpath="webhook",
+            webhookurl=f"{webhookurl}/webhook",
+            droppendingupdates=True  # حذف الرسائل المعلقة
         )
     except Exception as e:
-        logger.error(f"❌ Server error: {e}")
-    finally:
-        # تنظيف الموارد
-        await gold_price_manager.close()
-        await db_manager.save_data()
-        await license_manager.save_keys()
-        await application.shutdown()
+        print(f"❌ خطأ في تشغيل Webhook: {e}")
+        logger.error(f"Webhook error: {e}")
 
-def run_bot():
-    """تشغيل البوت"""
-    import platform
-    
-    # إصلاح مشكلة Windows مع asyncio
-    if platform.system() == 'Windows':
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    
+if name == "main_":
     print(f"""
-╔═══════════════════════════════════════════════════════════════╗
+╔══════════════════════════════════════════════════════════════╗
 ║                    🔥 Gold Nightmare Bot 🔥                    ║
-║                  Webhook Version for Render                   ║
-║                     Version 7.0 Professional                  ║
-╠═══════════════════════════════════════════════════════════════╣
-║                                                               ║
-║  🚀 الميزات الجديدة:                                          ║
-║  • نظام مفاتيح بعدد الرسائل (100 رسالة/مفتاح)                  ║
-║  • Webhook للعمل 24/7 على Render                             ║
-║  • تحليل متقدم بالذكاء الاصطناعي                               ║
-║  • لوحة إدارة شاملة للمشرف                                     ║
-║  • الكلمة السحرية: {Config.NIGHTMARE_TRIGGER}                               ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
+║                    Render Webhook Version                    ║
+║                     Version 6.0 Professional Enhanced        ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  🌐 تشغيل على Render مع Webhook                             ║
+║  ⚡ لا يحتاج polling - webhook فقط                          ║
+║  🔗 متوافق مع بيئة Render                                   ║
+║  📡 استقبال فوري للرسائل                                    ║
+║                                                              ║
+║  🚀 المميزات:                                               ║
+║  • 40 مفتاح تفعيل أولي (3 رسائل/يوم)                       ║
+║  • تجديد دقيق كل 24 ساعة بالضبط                            ║
+║  • أزرار تفاعلية للمفعلين فقط                               ║
+║  • لوحة إدارة شاملة ومتطورة                                 ║
+║  • تحليل شامل متقدم سري للمحترفين                          ║
+║  • تنسيقات جميلة وتحليلات احترافية                          ║
+║  • تحليل بـ 8000 توكن للدقة القصوى                         ║
+║                                                              ║
+║  👨‍💼 أوامر الإدارة:                                          ║
+║  /stats - إحصائيات سريعة                                   ║
+║  /backup - نسخة احتياطية                                   ║
+║  /keys - عرض كل المفاتيح                                    ║
+║  /unusedkeys - المفاتيح المتاحة                              ║
+║  /createkeys [عدد] [حد] - إنشاء مفاتيح                      ║
+║  /deleteuser [مفتاح] - حذف مستخدم                          ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
 """)
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"❌ Critical error: {e}")
-        logger.error(f"Critical error in run_bot: {e}")
-
-if __name__ == "__main__":
-    run_bot()
+    main()
