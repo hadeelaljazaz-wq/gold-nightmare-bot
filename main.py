@@ -1623,8 +1623,7 @@ def run_flask():
         use_reloader=False
     )
 
-# تشغيل Flask في ثريد منفصل
-  try:
+# تشغيل Flask في ثريد منفصلtry:
     # تشغيل Flask في ثريد منفصل
     threading.Thread(target=run_flask, daemon=True).start()
 
@@ -1637,6 +1636,7 @@ finally:
     await db_manager.save_data()
     await license_manager.save_keys()
     await application.shutdown()
+
 
 def run_bot():
     """تشغيل البوت"""
