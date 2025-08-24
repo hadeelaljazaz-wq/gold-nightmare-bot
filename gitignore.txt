@@ -1,0 +1,50 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# License keys - IMPORTANT: Never upload to GitHub
+license_keys.json
+
+# Database files
+*.db
+*.sqlite
+*.pkl
+*.pickle
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Test files
+test_*
+*_test.py
+
+# Backup files
+*.bak
+*.backup
+*_backup.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
