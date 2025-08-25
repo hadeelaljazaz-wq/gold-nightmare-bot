@@ -492,115 +492,101 @@ class PostgreSQLManager:
             logger.error(f"Error getting all users: {e}")
             return []
     
-    # ===================== مفاتيح التفعيل في PostgreSQL =====================
+
+   # ===================== مفاتيح التفعيل في PostgreSQL =====================
     async def save_license_key(self, license_key: LicenseKey):
-        """حفظ/تحديث مفتاح التفعيل في قاعدة البيانات مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
-                await conn.execute("""
-                    INSERT INTO license_keys (key, created_date, total_limit, used_total, 
-                                            is_active, user_id, username, notes, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                    ON CONFLICT (key) DO UPDATE SET
-                        total_limit = EXCLUDED.total_limit,
-                        used_total = EXCLUDED.used_total,
-                        is_active = EXCLUDED.is_active,
-                        user_id = EXCLUDED.user_id,
-                        username = EXCLUDED.username,
-                        notes = EXCLUDED.notes,
-                        updated_at = NOW()
-                """, license_key.key, license_key.created_date, license_key.total_limit,
-                     license_key.used_total, license_key.is_active, license_key.user_id,
-                     license_key.username, license_key.notes)
-        except asyncio.TimeoutError:
-            logger.warning(f"Database timeout saving license key")
-        except Exception as e:
-            logger.error(f"Error saving license key: {e}")
+        """حفظ/تحديث مفتاح التفعيل في قاعدة البيانات"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO license_keys (key, created_date, total_limit, used_total, 
+                                        is_active, user_id, username, notes, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                ON CONFLICT (key) DO UPDATE SET
+                    total_limit = EXCLUDED.total_limit,
+                    used_total = EXCLUDED.used_total,
+                    is_active = EXCLUDED.is_active,
+                    user_id = EXCLUDED.user_id,
+                    username = EXCLUDED.username,
+                    notes = EXCLUDED.notes,
+                    updated_at = NOW()
+            """, license_key.key, license_key.created_date, license_key.total_limit,
+                 license_key.used_total, license_key.is_active, license_key.user_id,
+                 license_key.username, license_key.notes)
     
     async def get_license_key(self, key: str) -> Optional[LicenseKey]:
-        """جلب مفتاح تفعيل من قاعدة البيانات مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
-                row = await conn.fetchrow("SELECT * FROM license_keys WHERE key = $1", key)
-                if row:
-                    return LicenseKey(
-                        key=row['key'],
-                        created_date=row['created_date'],
-                        total_limit=row['total_limit'],
-                        used_total=row['used_total'],
-                        is_active=row['is_active'],
-                        user_id=row['user_id'],
-                        username=row['username'],
-                        notes=row['notes'] or ''
-                    )
-        except asyncio.TimeoutError:
-            logger.warning(f"Database timeout getting license key")
-        except Exception as e:
-            logger.error(f"Error getting license key: {e}")
-        return None
+        """جلب مفتاح تفعيل من قاعدة البيانات"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM license_keys WHERE key = $1", key)
+            if row:
+                return LicenseKey(
+                    key=row['key'],
+                    created_date=row['created_date'],
+                    total_limit=row['total_limit'],
+                    used_total=row['used_total'],
+                    is_active=row['is_active'],
+                    user_id=row['user_id'],
+                    username=row['username'],
+                    notes=row['notes'] or ''
+                )
+            return None
     
     async def get_all_license_keys(self) -> Dict[str, LicenseKey]:
-        """جلب جميع مفاتيح التفعيل مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
-                rows = await conn.fetch("SELECT * FROM license_keys")
-                keys = {}
-                for row in rows:
-                    keys[row['key']] = LicenseKey(
-                        key=row['key'],
-                        created_date=row['created_date'],
-                        total_limit=row['total_limit'],
-                        used_total=row['used_total'],
-                        is_active=row['is_active'],
-                        user_id=row['user_id'],
-                        username=row['username'],
-                        notes=row['notes'] or ''
-                    )
-                return keys
-        except asyncio.TimeoutError:
-            logger.warning("Database timeout getting all license keys")
-            return {}
-        except Exception as e:
-            logger.error(f"Error getting all license keys: {e}")
-            return {}
+        """جلب جميع مفاتيح التفعيل"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM license_keys")
+            keys = {}
+            for row in rows:
+                keys[row['key']] = LicenseKey(
+                    key=row['key'],
+                    created_date=row['created_date'],
+                    total_limit=row['total_limit'],
+                    used_total=row['used_total'],
+                    is_active=row['is_active'],
+                    user_id=row['user_id'],
+                    username=row['username'],
+                    notes=row['notes'] or ''
+                )
+            return keys
     
     async def delete_license_key(self, key: str) -> bool:
-        """حذف مفتاح تفعيل مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
-                result = await conn.execute("DELETE FROM license_keys WHERE key = $1", key)
-                return result == "DELETE 1"
-        except asyncio.TimeoutError:
-            logger.warning(f"Database timeout deleting license key")
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting license key: {e}")
-            return False
+        """حذف مفتاح تفعيل"""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM license_keys WHERE key = $1", key)
+            return result == "DELETE 1"
     
     async def save_analysis(self, analysis: Analysis):
-        """حفظ تحليل مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
-                await conn.execute("""
-                    INSERT INTO analyses (id, user_id, timestamp, analysis_type, prompt, result, 
-                                        gold_price, image_data, indicators)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                    ON CONFLICT (id) DO NOTHING
-                """, analysis.id, analysis.user_id, analysis.timestamp, analysis.analysis_type,
-                     analysis.prompt, analysis.result, analysis.gold_price, analysis.image_data,
-                     json.dumps(analysis.indicators))
-        except asyncio.TimeoutError:
-            logger.warning("Database timeout saving analysis")
-        except Exception as e:
-            logger.error(f"Error saving analysis: {e}")
+        """حفظ تحليل"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO analyses (id, user_id, timestamp, analysis_type, prompt, result, 
+                                    gold_price, image_data, indicators, confidence_level, success_rate)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (id) DO NOTHING
+            """, analysis.id, analysis.user_id, analysis.timestamp, analysis.analysis_type,
+                 analysis.prompt, analysis.result, analysis.gold_price, analysis.image_data,
+                 json.dumps(analysis.indicators), analysis.confidence_level, analysis.success_rate)
     
     async def get_stats(self) -> Dict[str, Any]:
-        """جلب إحصائيات عامة مع timeout"""
-        try:
-            async with asyncio.wait_for(self.pool.acquire(), timeout=PerformanceConfig.DATABASE_TIMEOUT) as conn:
+        """جلب إحصائيات عامة مع معالجة الأعمدة المفقودة"""
+        async with self.pool.acquire() as conn:
+            try:
+                # التحقق من وجود العمود scalping_analyses
+                scalping_column_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = 'scalping_analyses'
+                    )
+                """)
+                
                 # إحصائيات المستخدمين
                 total_users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
                 active_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_activated = TRUE") or 0
+                
+                # إحصائيات السكالبينج مع معالجة آمنة
+                if scalping_column_exists:
+                    scalping_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE scalping_analyses > 0") or 0
+                else:
+                    scalping_users = 0
                 
                 # إحصائيات المفاتيح
                 total_keys = await conn.fetchval("SELECT COUNT(*) FROM license_keys") or 0
@@ -609,35 +595,34 @@ class PostgreSQLManager:
                 
                 # إحصائيات التحليلات
                 total_analyses = await conn.fetchval("SELECT COUNT(*) FROM analyses") or 0
+                scalping_analyses = await conn.fetchval("SELECT COUNT(*) FROM analyses WHERE analysis_type LIKE '%SCALPING%'") or 0
                 
                 # آخر 24 ساعة
                 yesterday = datetime.now() - timedelta(hours=24)
                 recent_analyses = await conn.fetchval("SELECT COUNT(*) FROM analyses WHERE timestamp > $1", yesterday) or 0
+                recent_scalping = await conn.fetchval("SELECT COUNT(*) FROM analyses WHERE timestamp > $1 AND analysis_type LIKE '%SCALPING%'", yesterday) or 0
                 
                 return {
                     'total_users': total_users,
                     'active_users': active_users,
+                    'scalping_users': scalping_users,
                     'activation_rate': f"{(active_users/total_users*100):.1f}%" if total_users > 0 else "0%",
                     'total_keys': total_keys,
                     'used_keys': used_keys,
                     'expired_keys': expired_keys,
                     'total_analyses': total_analyses,
-                    'recent_analyses': recent_analyses
+                    'scalping_analyses': scalping_analyses,
+                    'recent_analyses': recent_analyses,
+                    'recent_scalping': recent_scalping
                 }
-        except asyncio.TimeoutError:
-            logger.warning("Database timeout getting stats")
-            return {
-                'total_users': 0, 'active_users': 0, 'activation_rate': "0%",
-                'total_keys': 0, 'used_keys': 0, 'expired_keys': 0,
-                'total_analyses': 0, 'recent_analyses': 0
-            }
-        except Exception as e:
-            logger.error(f"Error getting stats: {e}")
-            return {
-                'total_users': 0, 'active_users': 0, 'activation_rate': "0%",
-                'total_keys': 0, 'used_keys': 0, 'expired_keys': 0,
-                'total_analyses': 0, 'recent_analyses': 0
-            }
+            except Exception as e:
+                print(f"خطأ في جلب الإحصائيات: {e}")
+                return {
+                    'total_users': 0, 'active_users': 0, 'scalping_users': 0,
+                    'activation_rate': "0%", 'total_keys': 0, 'used_keys': 0,
+                    'expired_keys': 0, 'total_analyses': 0, 'scalping_analyses': 0,
+                    'recent_analyses': 0, 'recent_scalping': 0
+                }
     
     async def close(self):
         """إغلاق اتصال قاعدة البيانات"""
