@@ -919,6 +919,7 @@ class PersistentLicenseManager:
         return True, f"{emoji('check')} تم حذف المستخدم {old_username or old_user_id} من المفتاح {key}\n{emoji('refresh')} تم إعادة تعيين العداد إلى 0\n{emoji('zap')} تم الحفظ في قاعدة البيانات"
 
 # ==================== Database Manager المُحدث ====================
+
 class PersistentDatabaseManager:
     def __init__(self, postgresql_manager: PostgreSQLManager):
         self.postgresql = postgresql_manager
@@ -1010,6 +1011,7 @@ class PersistentDatabaseManager:
             self._last_stats_update = datetime.now().timestamp()
         
         return getattr(self, '_cached_stats', {})
+
 
 # ==================== Enhanced Cache System ====================
 class CacheManager:
