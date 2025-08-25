@@ -1195,7 +1195,7 @@ class ClaudeAIManager:
                           image_base64: Optional[str] = None,
                           analysis_type: AnalysisType = AnalysisType.DETAILED,
                           user_settings: Dict[str, Any] = None) -> str:
-        """تحليل الذهب مع Claude المحسن والتحليل المتقدم للشارت"""
+        """تحليل الذهب مع Claude المحسن والتحليل المتقدم للشارت مع retry mechanism"""
         
         # التحقق من cache للتحليل النصي
         if not image_base64:
@@ -1213,55 +1213,207 @@ class ClaudeAIManager:
         system_prompt = self._build_enhanced_system_prompt(analysis_type, gold_price, user_settings, bool(image_base64))
         user_prompt = self._build_user_prompt(prompt, gold_price, analysis_type, bool(image_base64))
         
-        try:
-            content = []
-            
-            if image_base64:
-                # تحليل الشارت المتقدم
+        # محاولة التحليل مع retry mechanism
+        max_retries = 3 if image_base64 else 2  # محاولات أكثر للصور
+        base_delay = 2  # تأخير أساسي
+        
+        for attempt in range(max_retries):
+            try:
+                content = []
+                
+                if image_base64:
+                    # تحليل الشارت المتقدم مع تحسينات
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_base64
+                        }
+                    })
+                
                 content.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_base64
-                    }
+                    "type": "text",
+                    "text": user_prompt
                 })
-            
-            content.append({
-                "type": "text",
-                "text": user_prompt
-            })
-            
-            # استدعاء Claude مع timeout
-            message = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.messages.create,
-                    model=Config.CLAUDE_MODEL,
-                    max_tokens=Config.CLAUDE_MAX_TOKENS,
-                    temperature=Config.CLAUDE_TEMPERATURE,
-                    system=system_prompt,
-                    messages=[{
-                        "role": "user",
-                        "content": content
-                    }]
-                ),
-                timeout=PerformanceConfig.CLAUDE_TIMEOUT
-            )
-            
-            result = message.content[0].text
-            
-            # حفظ في cache إذا لم تكن صورة
-            if not image_base64:
-                self.cache.set_analysis(cache_key, result)
-            
-            return result
+                
+                # استدعاء Claude مع timeout محسن
+                timeout = PerformanceConfig.CLAUDE_TIMEOUT + (10 if image_base64 else 0)  # timeout أطول للصور
+                
+                message = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.messages.create,
+                        model=Config.CLAUDE_MODEL,
+                        max_tokens=Config.CLAUDE_MAX_TOKENS,
+                        temperature=Config.CLAUDE_TEMPERATURE,
+                        system=system_prompt,
+                        messages=[{
+                            "role": "user",
+                            "content": content
+                        }]
+                    ),
+                    timeout=timeout
+                )
+                
+                result = message.content[0].text
+                
+                # حفظ في cache إذا لم تكن صورة
+                if not image_base64:
+                    self.cache.set_analysis(cache_key, result)
+                
+                return result
 
-        except asyncio.TimeoutError:
-            logger.error("Claude API timeout")
-            return f"{emoji('cross')} انتهت مهلة التحليل. يرجى المحاولة مرة أخرى."
-        except Exception as e:
-            logger.error(f"Claude API error: {e}")
-            return f"{emoji('cross')} خطأ في التحليل: {str(e)}"
+            except asyncio.TimeoutError:
+                logger.warning(f"Claude API timeout - attempt {attempt + 1}/{max_retries}")
+                if attempt == max_retries - 1:
+                    if image_base64:
+                        return self._generate_chart_fallback_analysis(gold_price)
+                    else:
+                        return f"{emoji('warning')} انتهت مهلة التحليل. يرجى المحاولة مرة أخرى."
+                
+                # تأخير تصاعدي
+                await asyncio.sleep(base_delay * (attempt + 1))
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # معالجة خطأ Overloaded (529)
+                if "overloaded" in error_str or "529" in error_str:
+                    logger.warning(f"Claude API overloaded - attempt {attempt + 1}/{max_retries}")
+                    if attempt == max_retries - 1:
+                        if image_base64:
+                            return self._generate_chart_fallback_analysis(gold_price)
+                        else:
+                            return self._generate_text_fallback_analysis(gold_price, analysis_type)
+                    
+                    # تأخير أطول للـ overloaded
+                    await asyncio.sleep(base_delay * (attempt + 2))
+                    continue
+                
+                # معالجة أخطاء أخرى
+                elif "rate_limit" in error_str or "429" in error_str:
+                    logger.warning(f"Claude API rate limited - attempt {attempt + 1}/{max_retries}")
+                    if attempt == max_retries - 1:
+                        return f"{emoji('warning')} تم تجاوز الحد المسموح. حاول بعد قليل."
+                    
+                    await asyncio.sleep(base_delay * (attempt + 3))  # تأخير أطول للـ rate limit
+                    continue
+                
+                # خطأ غير قابل للإعادة
+                else:
+                    logger.error(f"Claude API error: {e}")
+                    if image_base64:
+                        return self._generate_chart_fallback_analysis(gold_price)
+                    else:
+                        return f"{emoji('cross')} خطأ في التحليل. يرجى المحاولة مرة أخرى."
+        
+        # إذا فشلت جميع المحاولات
+        if image_base64:
+            return self._generate_chart_fallback_analysis(gold_price)
+        else:
+            return self._generate_text_fallback_analysis(gold_price, analysis_type)
+    
+    def _generate_chart_fallback_analysis(self, gold_price: GoldPrice) -> str:
+        """تحليل شارت بديل عند فشل Claude"""
+        return f"""{emoji('camera')} **تحليل الشارت - وضع الطوارئ**
+
+{emoji('warning')} Claude API مشغول حالياً، إليك تحليل أساسي:
+
+{emoji('gold')} **السعر الحالي:** ${gold_price.price}
+{emoji('chart')} **التغيير:** {gold_price.change_24h:+.2f} ({gold_price.change_percentage:+.2f}%)
+
+{emoji('target')} **نصائح عامة لتحليل الشارت:**
+
+📈 **ابحث عن:**
+• مستويات الدعم والمقاومة الواضحة
+• النماذج الفنية (مثلثات، أعلام، رؤوس وأكتاف)
+• اتجاه الترند العام (صاعد/هابط/عرضي)
+• حجم التداول مع حركة السعر
+
+⚖️ **إدارة المخاطر:**
+• لا تخاطر بأكثر من 2% من المحفظة
+• ضع وقف خسارة دائماً
+• تأكد من نسبة مخاطرة/عائد جيدة (1:2 على الأقل)
+
+{emoji('refresh')} **حاول مرة أخرى بعد دقائق** - Claude سيكون متاحاً
+{emoji('phone')} **للحصول على تحليل متخصص:** @Odai_xau
+
+{emoji('info')} هذا تحليل تعليمي عام وليس نصيحة استثمارية"""
+
+    def _generate_text_fallback_analysis(self, gold_price: GoldPrice, analysis_type: AnalysisType) -> str:
+        """تحليل نصي بديل عند فشل Claude"""
+        
+        # تحديد الاتجاه العام
+        if gold_price.change_24h > 5:
+            trend = "صاعد بقوة"
+            recommendation = "BUY"
+            target = gold_price.price + 20
+            stop_loss = gold_price.price - 10
+        elif gold_price.change_24h > 0:
+            trend = "صاعد"
+            recommendation = "BUY"
+            target = gold_price.price + 15
+            stop_loss = gold_price.price - 8
+        elif gold_price.change_24h < -5:
+            trend = "هابط بقوة"
+            recommendation = "SELL"
+            target = gold_price.price - 20
+            stop_loss = gold_price.price + 10
+        elif gold_price.change_24h < 0:
+            trend = "هابط"
+            recommendation = "SELL"
+            target = gold_price.price - 15
+            stop_loss = gold_price.price + 8
+        else:
+            trend = "عرضي"
+            recommendation = "HOLD"
+            target = gold_price.price + 10
+            stop_loss = gold_price.price - 10
+        
+        if analysis_type == AnalysisType.QUICK:
+            return f"""{emoji('zap')} **تحليل سريع - وضع الطوارئ**
+
+{emoji('warning')} Claude API مشغول، إليك تحليل أساسي:
+
+{emoji('target')} **التوصية:** {recommendation}
+{emoji('up_arrow')} **السعر الحالي:** ${gold_price.price}
+{emoji('chart')} **الاتجاه:** {trend}
+
+{emoji('trophy')} **الهدف:** ${target:.2f}
+{emoji('shield')} **وقف الخسارة:** ${stop_loss:.2f}
+{emoji('fire')} **مستوى الثقة:** 70%
+
+{emoji('refresh')} **حاول مرة أخرى بعد دقائق** - Claude سيكون متاحاً"""
+        
+        else:
+            return f"""{emoji('chart')} **تحليل مفصل - وضع الطوارئ**
+
+{emoji('warning')} Claude API مشغول حالياً، إليك تحليل تقني أساسي:
+
+{emoji('gold')} **معلومات السعر:**
+• السعر: ${gold_price.price}
+• التغيير 24س: {gold_price.change_24h:+.2f} ({gold_price.change_percentage:+.2f}%)
+• المدى: ${gold_price.low_24h} - ${gold_price.high_24h}
+
+{emoji('target')} **التحليل الفني:**
+• الاتجاه العام: {trend}
+• التوصية: {recommendation}
+• الهدف المتوقع: ${target:.2f}
+• وقف الخسارة: ${stop_loss:.2f}
+
+{emoji('shield')} **إدارة المخاطر:**
+• نسبة المخاطرة المقترحة: 2% من المحفظة
+• نسبة المخاطرة/العائد: 1:2
+• مستوى الثقة: 70%
+
+{emoji('clock')} **الإطار الزمني:** 
+• قصير المدى: حذر بسبب التقلبات
+• متوسط المدى: تابع الاتجاه العام
+
+{emoji('refresh')} **حاول مرة أخرى بعد دقائق** - سيكون Claude متاحاً لتحليل أكثر دقة
+{emoji('phone')} **للحصول على تحليل متخصص:** @Odai_xau
+
+{emoji('info')} هذا تحليل تعليمي أساسي وليس نصيحة استثمارية"""
     
     def _build_enhanced_system_prompt(self, analysis_type: AnalysisType, 
                                     gold_price: GoldPrice,
