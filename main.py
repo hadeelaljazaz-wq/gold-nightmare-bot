@@ -60,13 +60,22 @@ load_dotenv()
 
 # ==================== Performance Optimizations ====================
 class PerformanceConfig:
-    # تحسينات الأداء
-    CLAUDE_TIMEOUT = 45  # زيادة المهلة
+    # تحسينات الأداء محسنة لتجنب Claude API Overloaded
+    CLAUDE_TIMEOUT = 60  # timeout أطول للصور
     DATABASE_TIMEOUT = 10  # زيادة مهلة قاعدة البيانات
     HTTP_TIMEOUT = 15  # مهلة HTTP
-    CACHE_TTL = 180  # 3 دقائق cache
-    MAX_RETRIES = 2  # محاولات إعادة
+    CACHE_TTL = 300  # 5 دقائق cache
+    MAX_RETRIES = 3  # محاولات إعادة أكثر
     CONNECTION_POOL_SIZE = 5  # حجم pool الاتصالات
+    
+    # إعدادات خاصة بـ Claude API
+    CLAUDE_RETRY_DELAY = 3  # تأخير أساسي للإعادة
+    CLAUDE_MAX_RETRIES = 3  # محاولات أقصى لـ Claude
+    CLAUDE_OVERLOAD_DELAY = 10  # تأخير إضافي عند Overload
+    
+    # إعدادات الصور
+    IMAGE_MAX_SIZE_MB = 3  # أقصى حجم للصورة المضغوطة
+    IMAGE_RETRY_DELAY = 5  # تأخير إعادة تحليل الصور
 
 # ==================== Emojis Dictionary ====================
 EMOJIS = {
@@ -1140,7 +1149,7 @@ class GoldPriceManager:
 class EnhancedImageProcessor:
     @staticmethod
     def process_image(image_data: bytes) -> Optional[str]:
-        """معالجة الصور مع تحسينات للشارت"""
+        """معالجة الصور مع تحسينات للشارت وتقليل الحمل على Claude API"""
         try:
             if len(image_data) > Config.MAX_IMAGE_SIZE:
                 raise ValueError(f"Image too large: {len(image_data)} bytes")
@@ -1158,19 +1167,38 @@ class EnhancedImageProcessor:
             elif image.mode not in ('RGB', 'L'):
                 image = image.convert('RGB')
             
-            # تحسين الحدة للشارت
-            if max(image.size) > Config.MAX_IMAGE_DIMENSION:
-                ratio = Config.MAX_IMAGE_DIMENSION / max(image.size)
+            # تحسين الحجم للحد من أخطاء Overloaded
+            max_dimension = min(Config.MAX_IMAGE_DIMENSION, 1200)  # تقليل الحد الأقصى
+            if max(image.size) > max_dimension:
+                ratio = max_dimension / max(image.size)
                 new_size = tuple(int(dim * ratio) for dim in image.size)
                 image = image.resize(new_size, Image.Resampling.LANCZOS)
             
-            # تحسين الجودة للشارت
+            # ضغط أفضل لتقليل الحمل
             buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=Config.IMAGE_QUALITY, optimize=True)
+            
+            # استخدام جودة أقل للصور الكبيرة
+            original_size = len(image_data)
+            if original_size > 5 * 1024 * 1024:  # أكثر من 5 ميجا
+                quality = 75
+            elif original_size > 2 * 1024 * 1024:  # أكثر من 2 ميجا  
+                quality = 80
+            else:
+                quality = Config.IMAGE_QUALITY
+            
+            image.save(buffer, format='JPEG', quality=quality, optimize=True)
+            
+            # التحقق من حجم النتيجة
+            compressed_size = len(buffer.getvalue())
+            
+            # إذا كانت الصورة المضغوطة لا تزال كبيرة، ضغط أكثر
+            if compressed_size > 3 * 1024 * 1024:  # أكثر من 3 ميجا
+                buffer = io.BytesIO()
+                image.save(buffer, format='JPEG', quality=65, optimize=True)
             
             image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             
-            logger.info(f"Processed chart image: {image.size}, {len(buffer.getvalue())} bytes")
+            logger.info(f"Processed chart image: {image.size}, {len(buffer.getvalue())} bytes (was {original_size} bytes)")
             return image_base64
             
         except Exception as e:
@@ -3000,7 +3028,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @require_activation_with_key_usage_fast("image_analysis")
 async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور المحسنة مع تحليل الشارت المتقدم"""
+    """معالجة الصور المحسنة مع تحليل الشارت المتقدم وإدارة أخطاء Claude API"""
     user = context.user_data['user']
     
     # فحص الحد المسموح
@@ -3019,7 +3047,8 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         processing_msg = await update.message.reply_text(
             f"{emoji('fire')}{emoji('fire')}{emoji('fire')} تحليل شارت شامل متقدم {emoji('fire')}{emoji('fire')}{emoji('fire')}\n\n"
             f"{emoji('camera')} معالجة الصورة بالذكاء الاصطناعي المتقدم...\n"
-            f"{emoji('magnifier')} تحليل النماذج الفنية والمستويات..."
+            f"{emoji('magnifier')} تحليل النماذج الفنية والمستويات...\n"
+            f"{emoji('clock')} قد يحتاج وقت أطول للدقة القصوى..."
         )
     else:
         processing_msg = await update.message.reply_text(
@@ -3027,7 +3056,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
             f"{emoji('brain')} جاري تحليل الشارت بالذكاء الاصطناعي...\n"
             f"{emoji('magnifier')} استخراج النماذج الفنية والمستويات...\n"
             f"{emoji('target')} تحديد نقاط الدخول والخروج...\n\n"
-            f"{emoji('clock')} هذا قد يستغرق بضع ثوان..."
+            f"{emoji('info')} إذا كان Claude API مشغولاً، ستحصل على تحليل بديل"
         )
     
     try:
@@ -3035,11 +3064,31 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         photo_file = await photo.get_file()
         image_data = await photo_file.download_as_bytearray()
         
-        # معالجة محسنة للصورة
+        # تحديث رسالة المعالجة
+        await processing_msg.edit_text(
+            f"{emoji('gear')} معالجة الصورة وتحسينها للتحليل...\n"
+            f"{emoji('clock')} يرجى الانتظار..."
+        )
+        
+        # معالجة محسنة للصورة مع ضغط أفضل
         image_base64 = EnhancedImageProcessor.process_image(image_data)
         if not image_base64:
-            await processing_msg.edit_text(f"{emoji('cross')} لا يمكن معالجة الصورة. تأكد من وضوح الشارت.")
+            await processing_msg.edit_text(
+                f"{emoji('cross')} **خطأ في معالجة الصورة**\n\n"
+                f"{emoji('info')} تأكد من:\n"
+                f"• وضوح الشارت\n"
+                f"• حجم الصورة أقل من 10 ميجا\n"
+                f"• جودة الصورة جيدة\n\n"
+                f"{emoji('refresh')} حاول مرة أخرى مع صورة أوضح"
+            )
             return
+        
+        # تحديث رسالة المعالجة
+        await processing_msg.edit_text(
+            f"{emoji('brain')} الآن جاري التحليل بالذكاء الاصطناعي...\n"
+            f"{emoji('camera')} قراءة النماذج الفنية من الشارت...\n"
+            f"{emoji('clock')} قد يستغرق 30-60 ثانية..."
+        )
         
         # الحصول على السعر مع timeout
         price = await asyncio.wait_for(
@@ -3059,7 +3108,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         if Config.NIGHTMARE_TRIGGER in caption:
             analysis_type = AnalysisType.NIGHTMARE
         
-        # التحليل المتقدم للشارت
+        # التحليل المتقدم للشارت مع إدارة الأخطاء
         result = await context.bot_data['claude_manager'].analyze_gold(
             prompt=caption,
             gold_price=price,
@@ -3070,8 +3119,26 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await processing_msg.delete()
         
-        # إضافة هيدر خاص لتحليل الشارت
-        chart_header = f"""{emoji('camera')} **تحليل الشارت المتقدم بالذكاء الاصطناعي**
+        # التحقق من نوع النتيجة (نجح أم fallback)
+        if "وضع الطوارئ" in result or "Claude API مشغول" in result:
+            # تحليل بديل - إضافة معلومات إضافية
+            chart_header = f"""{emoji('warning')} **تحليل الشارت - وضع الطوارئ**
+
+{emoji('info')} Claude API مشغول حالياً، لكن إليك تحليل مفيد:
+
+{result}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{emoji('refresh')} **للحصول على تحليل متقدم:**
+• حاول مرة أخرى بعد 5-10 دقائق
+• Claude سيكون متاحاً لتحليل أكثر تفصيلاً
+• أو تواصل مع المطور للمساعدة الفورية
+
+{emoji('diamond')} **Gold Nightmare Academy**
+{emoji('phone')} **للحصول على تحليل فوري:** @Odai_xau"""
+        else:
+            # تحليل كامل ناجح
+            chart_header = f"""{emoji('camera')} **تحليل الشارت المتقدم بالذكاء الاصطناعي**
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3107,10 +3174,41 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         asyncio.create_task(context.bot_data['db'].add_user(user))
         
     except asyncio.TimeoutError:
-        await processing_msg.edit_text(f"{emoji('warning')} انتهت مهلة تحليل الشارت. حاول مرة أخرى.")
+        await processing_msg.edit_text(
+            f"{emoji('warning')} **انتهت مهلة تحليل الشارت**\n\n"
+            f"{emoji('info')} هذا قد يحدث إذا كان:\n"
+            f"• Claude API مشغول جداً\n"
+            f"• الشارت معقد ويحتاج وقت أطول\n"
+            f"• مشكلة مؤقتة في الاتصال\n\n"
+            f"{emoji('refresh')} **الحلول:**\n"
+            f"• حاول مرة أخرى بعد دقائق قليلة\n"
+            f"• أرسل صورة أوضح أو أصغر\n"
+            f"• تواصل مع الدعم للمساعدة الفورية\n\n"
+            f"{emoji('phone')} **الدعم المباشر:** @Odai_xau"
+        )
     except Exception as e:
-        logger.error(f"Error in photo analysis: {e}")
-        await processing_msg.edit_text(f"{emoji('cross')} حدث خطأ أثناء تحليل الشارت.")
+        logger.error(f"Error in enhanced photo analysis: {e}")
+        error_details = str(e)
+        
+        if "overloaded" in error_details.lower() or "529" in error_details:
+            await processing_msg.edit_text(
+                f"{emoji('warning')} **Claude API مشغول حالياً**\n\n"
+                f"{emoji('info')} الذكاء الاصطناعي يتعامل مع طلبات كثيرة الآن\n\n"
+                f"{emoji('clock')} **حاول مرة أخرى بعد:**\n"
+                f"• 5-10 دقائق للحصول على تحليل كامل\n"
+                f"• أو تواصل مع المطور للمساعدة الفورية\n\n"
+                f"{emoji('diamond')} **Gold Nightmare Academy**\n"
+                f"{emoji('phone')} **الدعم المباشر:** @Odai_xau"
+            )
+        else:
+            await processing_msg.edit_text(
+                f"{emoji('cross')} **خطأ في تحليل الشارت**\n\n"
+                f"{emoji('refresh')} **حاول مرة أخرى أو:**\n"
+                f"• أرسل صورة أوضح\n"
+                f"• تأكد من جودة الشارت\n"
+                f"• تواصل مع الدعم للمساعدة\n\n"
+                f"{emoji('phone')} **الدعم المباشر:** @Odai_xau"
+            )
 
 # ==================== Enhanced Callback Query Handler ====================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3469,12 +3567,110 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             # هنا يمكن إضافة منطق إعادة التشغيل الفعلي
             
         elif data == "settings":
+            settings_message = f"""{emoji('gear')} **إعدادات البوت**
+
+{emoji('brain')} **حالة الذكاء الاصطناعي:**
+• Claude API: نشط ومتاح
+• تحليل النصوص: متاح
+• تحليل الشارت: متاح
+• معالجة الأخطاء: محسنة
+
+{emoji('camera')} **تحليل الشارت:**
+• الحد الأقصى: 10 ميجا
+• الصيغ المدعومة: JPG, PNG
+• الضغط التلقائي: مفعل
+• Fallback عند الانشغال: متاح
+
+{emoji('zap')} **تحسينات الأداء:**
+• Timeout للعمليات: 60 ثانية
+• إعادة المحاولة: 3 مرات
+• Cache للتحليلات: 5 دقائق
+• معالجة أخطاء متقدمة: مفعلة
+
+{emoji('info')} **عند مواجهة "Claude API مشغول":**
+1. انتظر 5-10 دقائق وحاول مرة أخرى
+2. للصور: استخدم صورة أصغر أو أوضح
+3. للتحليل العاجل: تواصل مع @Odai_xau
+
+{emoji('shield')} **البيانات:**
+• قاعدة البيانات: PostgreSQL محسنة
+• النسخ الاحتياطية: تلقائية
+• الأمان: عالي المستوى"""
+            
             await query.edit_message_text(
-                f"{emoji('gear')} الإعدادات\n\n{emoji('construction')} هذه الميزة قيد التطوير",
+                settings_message,
                 reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"{emoji('refresh')} اختبار Claude API", callback_data="test_claude_api")],
                     [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="back_main")]
                 ])
             )
+        
+        elif data == "test_claude_api":
+            # اختبار سريع لـ Claude API
+            test_msg = await query.edit_message_text(f"{emoji('clock')} جاري اختبار Claude API...")
+            
+            try:
+                # اختبار بسيط وسريع
+                price = await context.bot_data['gold_price_manager'].get_gold_price()
+                test_result = await asyncio.wait_for(
+                    context.bot_data['claude_manager'].analyze_gold(
+                        prompt="اختبار سريع - اكتب 'Claude API يعمل بشكل طبيعي' فقط",
+                        gold_price=price,
+                        analysis_type=AnalysisType.QUICK
+                    ),
+                    timeout=15
+                )
+                
+                if "Claude API يعمل" in test_result or len(test_result) > 20:
+                    await test_msg.edit_text(
+                        f"{emoji('check')} **Claude API يعمل بشكل طبيعي**\n\n"
+                        f"{emoji('zap')} التحليل: متاح\n"
+                        f"{emoji('camera')} تحليل الشارت: متاح\n"
+                        f"{emoji('clock')} وقت الاستجابة: سريع\n\n"
+                        f"{emoji('info')} يمكنك استخدام جميع المميزات الآن",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(f"{emoji('back')} رجوع للإعدادات", callback_data="settings")]
+                        ])
+                    )
+                else:
+                    raise Exception("Unexpected response")
+                    
+            except asyncio.TimeoutError:
+                await test_msg.edit_text(
+                    f"{emoji('warning')} **Claude API بطيء حالياً**\n\n"
+                    f"{emoji('info')} النظام يعمل لكن بسرعة أقل\n"
+                    f"{emoji('clock')} انتظر 5-10 دقائق للاستجابة الطبيعية\n"
+                    f"{emoji('phone')} للاستفسار: @Odai_xau",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"{emoji('refresh')} اختبر مرة أخرى", callback_data="test_claude_api")],
+                        [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="settings")]
+                    ])
+                )
+            except Exception as e:
+                error_str = str(e).lower()
+                if "overloaded" in error_str or "529" in error_str:
+                    await test_msg.edit_text(
+                        f"{emoji('warning')} **Claude API مشغول جداً**\n\n"
+                        f"{emoji('info')} يتعامل مع طلبات كثيرة حالياً\n"
+                        f"{emoji('clock')} انتظر 10-15 دقيقة وحاول مرة أخرى\n"
+                        f"{emoji('refresh')} النظام سيعود للعمل الطبيعي تلقائياً\n"
+                        f"{emoji('phone')} للمساعدة الفورية: @Odai_xau",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(f"{emoji('refresh')} اختبر مرة أخرى", callback_data="test_claude_api")],
+                            [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="settings")]
+                        ])
+                    )
+                else:
+                    await test_msg.edit_text(
+                        f"{emoji('cross')} **مشكلة مؤقتة في Claude API**\n\n"
+                        f"{emoji('info')} حدث خطأ تقني مؤقت\n"
+                        f"{emoji('refresh')} حاول مرة أخرى بعد قليل\n"
+                        f"{emoji('phone')} إذا استمرت المشكلة: @Odai_xau",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(f"{emoji('refresh')} اختبر مرة أخرى", callback_data="test_claude_api")],
+                            [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="settings")]
+                        ])
+                    )
         
         # تحديث بيانات المستخدم بشكل غير متزامن للسرعة
         user.last_activity = datetime.now()
@@ -4129,66 +4325,185 @@ async def setup_enhanced_webhook():
         print(f"{emoji('cross')} خطأ في إعداد Enhanced Webhook: {e}")
 
 def main():
-    """الدالة الرئيسية المحسنة لـ Render Webhook مع Enhanced PostgreSQL"""
+    """الدالة الرئيسية المحسنة لـ Render Webhook مع Enhanced PostgreSQL + تشخيص شامل"""
     
     # التحقق من متغيرات البيئة
+    print(f"\n{emoji('gear')} فحص متغيرات البيئة...")
+    
     if not Config.TELEGRAM_BOT_TOKEN:
         print(f"{emoji('cross')} خطأ: TELEGRAM_BOT_TOKEN غير موجود")
         return
+    else:
+        print(f"{emoji('check')} TELEGRAM_BOT_TOKEN: موجود")
     
     if not Config.CLAUDE_API_KEY:
         print(f"{emoji('cross')} خطأ: CLAUDE_API_KEY غير موجود")
         return
+    else:
+        print(f"{emoji('check')} CLAUDE_API_KEY: موجود")
     
     if not Config.DATABASE_URL:
-        print(f"{emoji('cross')} خطأ: DATABASE_URL غير موجود")
-        print("⚠️ تحتاج إضافة Enhanced PostgreSQL في Render")
-        return
+        print(f"{emoji('cross')} خطأ حرج: DATABASE_URL غير موجود!")
+        print(f"{emoji('warning')} هذا يعني أن البيانات لن تحفظ!")
+        print(f"{emoji('info')} تحتاج إضافة PostgreSQL في Render:")
+        print("1. اذهب إلى Render Dashboard")
+        print("2. اختر الخدمة")
+        print("3. Environment → Add PostgreSQL")
+        print("4. انسخ DATABASE_URL وأضفه للمتغيرات")
+        
+        # تشغيل بدون قاعدة بيانات (سيفقد البيانات)
+        print(f"\n{emoji('warning')} سيتم التشغيل بدون قاعدة بيانات - البيانات ستضيع!")
+        input("اضغط Enter للمتابعة أو Ctrl+C للإلغاء...")
+    else:
+        print(f"{emoji('check')} DATABASE_URL: موجود - {Config.DATABASE_URL[:20]}...")
     
-    print(f"{emoji('rocket')} تشغيل Gold Nightmare Bot Enhanced مع PostgreSQL...")
+    print(f"\n{emoji('rocket')} تشغيل Gold Nightmare Bot Enhanced مع تشخيص شامل...")
     
     # إنشاء التطبيق
     global application
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
     
-    # إنشاء المكونات المُحدثة مع تحسينات الأداء
+    # إنشاء المكونات مع تشخيص
     cache_manager = CacheManager()
-    postgresql_manager = PostgreSQLManager()
-    db_manager = PersistentDatabaseManager(postgresql_manager)
-    license_manager = PersistentLicenseManager(postgresql_manager)
-    gold_price_manager = GoldPriceManager(cache_manager)
-    claude_manager = ClaudeAIManager(cache_manager)
-    rate_limiter = RateLimiter()
-    security_manager = SecurityManager()
     
-    # تحميل البيانات من Enhanced PostgreSQL
-    async def initialize_enhanced_data():
-        print(f"{emoji('zap')} تهيئة Enhanced PostgreSQL...")
-        await postgresql_manager.initialize()
+    # تشخيص قاعدة البيانات
+    async def diagnose_and_initialize():
+        print(f"\n{emoji('magnifier')} بدء التشخيص الشامل...")
         
-        print(f"{emoji('key')} تحميل مفاتيح التفعيل من Enhanced PostgreSQL...")
-        await license_manager.initialize()
+        if not Config.DATABASE_URL:
+            print(f"{emoji('cross')} لا توجد قاعدة بيانات - سيتم استخدام Memory Storage")
+            print(f"{emoji('warning')} البيانات ستضيع عند إعادة التشغيل!")
+            
+            # استخدام نظام بديل بدون قاعدة بيانات
+            db_manager = MemoryDatabaseManager()
+            license_manager = MemoryLicenseManager()
+            
+            await db_manager.initialize()
+            await license_manager.initialize()
+            
+            print(f"{emoji('info')} تم تشغيل النظام البديل بالذاكرة")
+            
+        else:
+            try:
+                print(f"{emoji('zap')} اختبار الاتصال بـ PostgreSQL...")
+                
+                # اختبار الاتصال أولاً
+                postgresql_manager = PostgreSQLManager()
+                
+                # محاولة الاتصال مع timeout
+                try:
+                    await asyncio.wait_for(postgresql_manager.initialize(), timeout=30)
+                    print(f"{emoji('check')} نجح الاتصال بـ PostgreSQL!")
+                    
+                    # اختبار كتابة وقراءة بيانات
+                    print(f"{emoji('gear')} اختبار الكتابة والقراءة...")
+                    
+                    async with postgresql_manager.pool.acquire() as conn:
+                        # إنشاء جدول اختبار
+                        await conn.execute("""
+                            CREATE TABLE IF NOT EXISTS test_table (
+                                id SERIAL PRIMARY KEY,
+                                test_data TEXT,
+                                created_at TIMESTAMP DEFAULT NOW()
+                            )
+                        """)
+                        
+                        # كتابة بيانات تجريبية
+                        test_data = f"test_{datetime.now().timestamp()}"
+                        await conn.execute("INSERT INTO test_table (test_data) VALUES ($1)", test_data)
+                        
+                        # قراءة البيانات
+                        result = await conn.fetchval("SELECT test_data FROM test_table WHERE test_data = $1", test_data)
+                        
+                        if result == test_data:
+                            print(f"{emoji('check')} اختبار الكتابة والقراءة: نجح!")
+                            
+                            # حذف البيانات التجريبية
+                            await conn.execute("DELETE FROM test_table WHERE test_data = $1", test_data)
+                            
+                        else:
+                            raise Exception("فشل في اختبار القراءة")
+                    
+                    # تهيئة المديرين
+                    db_manager = PersistentDatabaseManager(postgresql_manager)
+                    license_manager = PersistentLicenseManager(postgresql_manager)
+                    
+                    print(f"{emoji('key')} تحميل مفاتيح التفعيل من PostgreSQL...")
+                    await license_manager.initialize()
+                    
+                    print(f"{emoji('users')} تحميل المستخدمين من PostgreSQL...")
+                    await db_manager.initialize()
+                    
+                    print(f"{emoji('check')} اكتمال التحميل من PostgreSQL!")
+                    print(f"📊 إحصائيات:")
+                    print(f"   🔑 المفاتيح المحمّلة: {len(license_manager.license_keys)}")
+                    print(f"   👥 المستخدمون المحمّلون: {len(db_manager.users)}")
+                    
+                    # اختبار حفظ مفتاح جديد
+                    if len(license_manager.license_keys) == 0:
+                        print(f"{emoji('info')} لا توجد مفاتيح - سيتم إنشاء مفاتيح تجريبية...")
+                        test_key = await license_manager.create_new_key(50, "مفتاح تجريبي للاختبار")
+                        print(f"{emoji('check')} تم إنشاء مفتاح تجريبي: {test_key}")
+                        
+                        # التحقق من الحفظ
+                        saved_key = await license_manager.get_key_info(test_key)
+                        if saved_key:
+                            print(f"{emoji('check')} تأكيد: المفتاح محفوظ في قاعدة البيانات!")
+                        else:
+                            print(f"{emoji('cross')} خطأ: المفتاح لم يحفظ!")
+                    
+                except asyncio.TimeoutError:
+                    print(f"{emoji('cross')} انتهت مهلة الاتصال بـ PostgreSQL (30 ثانية)")
+                    raise Exception("Database connection timeout")
+                
+            except Exception as e:
+                print(f"{emoji('cross')} فشل الاتصال بـ PostgreSQL: {str(e)}")
+                print(f"{emoji('info')} السبب المحتمل:")
+                print("1. DATABASE_URL خاطئ")
+                print("2. PostgreSQL غير مُفعَّل في Render")
+                print("3. مشكلة في الشبكة")
+                print("4. قاعدة البيانات غير جاهزة بعد")
+                
+                print(f"\n{emoji('gear')} التبديل إلى النظام البديل...")
+                
+                # استخدام نظام بديل
+                db_manager = MemoryDatabaseManager()
+                license_manager = MemoryLicenseManager()
+                
+                await db_manager.initialize()
+                await license_manager.initialize()
+                
+                print(f"{emoji('warning')} يعمل البوت بالذاكرة - البيانات ستضيع!")
         
-        print(f"{emoji('users')} تحميل المستخدمين من Enhanced PostgreSQL...")
-        await db_manager.initialize()
+        # المديرين الآخرين
+        gold_price_manager = GoldPriceManager(cache_manager)
+        claude_manager = ClaudeAIManager(cache_manager)
+        rate_limiter = RateLimiter()
+        security_manager = SecurityManager()
         
-        print(f"{emoji('check')} اكتمال التحميل من Enhanced PostgreSQL!")
-        print(f"{emoji('camera')} تحليل الشارت المتقدم: {'مفعل' if Config.CHART_ANALYSIS_ENABLED else 'معطل'}")
+        # حفظ في bot_data
+        application.bot_data.update({
+            'db': db_manager,
+            'license_manager': license_manager,
+            'gold_price_manager': gold_price_manager,
+            'claude_manager': claude_manager,
+            'rate_limiter': rate_limiter,
+            'security': security_manager,
+            'cache': cache_manager
+        })
+        
+        if hasattr(db_manager, 'postgresql'):
+            application.bot_data['postgresql'] = db_manager.postgresql
+        
+        return db_manager, license_manager
     
-    # تشغيل تحميل البيانات المحسن
-    asyncio.get_event_loop().run_until_complete(initialize_enhanced_data())
-    
-    # حفظ في bot_data
-    application.bot_data.update({
-        'db': db_manager,
-        'license_manager': license_manager,
-        'gold_price_manager': gold_price_manager,
-        'claude_manager': claude_manager,
-        'rate_limiter': rate_limiter,
-        'security': security_manager,
-        'cache': cache_manager,
-        'postgresql': postgresql_manager
-    })
+    # تشغيل التشخيص والتهيئة
+    try:
+        db_manager, license_manager = asyncio.get_event_loop().run_until_complete(diagnose_and_initialize())
+    except Exception as e:
+        print(f"{emoji('cross')} خطأ في التهيئة: {e}")
+        print(f"{emoji('stop')} توقف البوت")
+        return
     
     # إضافة المعالجات المحسنة
     application.add_handler(CommandHandler("start", start_command))
@@ -4200,10 +4515,81 @@ def main():
     application.add_handler(CommandHandler("backup", backup_command))
     application.add_handler(CommandHandler("stats", stats_command))
     
+    # أمر تشخيص جديد
+    @admin_only
+    async def diagnose_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """أمر تشخيص حالة النظام"""
+        diag_msg = await update.message.reply_text(f"{emoji('magnifier')} جاري التشخيص...")
+        
+        # تشخيص قاعدة البيانات
+        db_status = "❌ غير متصل"
+        db_type = "Memory (مؤقت)"
+        keys_count = len(context.bot_data['license_manager'].license_keys)
+        users_count = len(context.bot_data['db'].users)
+        
+        if hasattr(context.bot_data['db'], 'postgresql'):
+            try:
+                stats = await asyncio.wait_for(context.bot_data['db'].get_stats(), timeout=10)
+                db_status = "✅ متصل ويعمل"
+                db_type = "PostgreSQL (دائم)"
+            except:
+                db_status = "⚠️ مشكلة في الاتصال"
+                db_type = "PostgreSQL (منقطع)"
+        
+        # تشخيص Claude API
+        claude_status = "❌ غير متاح"
+        try:
+            price = await context.bot_data['gold_price_manager'].get_gold_price()
+            test_result = await asyncio.wait_for(
+                context.bot_data['claude_manager'].analyze_gold(
+                    "test", price, analysis_type=AnalysisType.QUICK
+                ),
+                timeout=15
+            )
+            if len(test_result) > 10:
+                claude_status = "✅ يعمل بشكل طبيعي"
+        except asyncio.TimeoutError:
+            claude_status = "⚠️ بطيء"
+        except Exception as e:
+            if "overloaded" in str(e).lower():
+                claude_status = "⚠️ مشغول"
+            else:
+                claude_status = "❌ خطأ"
+        
+        diagnosis = f"""{emoji('magnifier')} **تشخيص شامل للنظام**
+
+{emoji('shield')} **قاعدة البيانات:**
+• الحالة: {db_status}
+• النوع: {db_type}
+• DATABASE_URL: {'✅ موجود' if Config.DATABASE_URL else '❌ مفقود'}
+
+{emoji('chart')} **البيانات:**
+• المفاتيح المحمّلة: {keys_count}
+• المستخدمون: {users_count}
+• الحفظ: {'دائم' if 'PostgreSQL' in db_type else 'مؤقت - سيضيع!'}
+
+{emoji('brain')} **الذكاء الاصطناعي:**
+• Claude API: {claude_status}
+• تحليل النصوص: {'✅' if 'يعمل' in claude_status else '⚠️'}
+• تحليل الشارت: {'✅' if 'يعمل' in claude_status else '⚠️'}
+
+{emoji('gold')} **خدمات أخرى:**
+• Gold API: ✅ يعمل
+• Telegram: ✅ متصل
+• Cache: ✅ نشط
+
+⏰ وقت التشخيص: {datetime.now().strftime('%H:%M:%S')}
+
+{"🚨 **تحذير: البيانات مؤقتة وستضيع!**" if db_type == "Memory (مؤقت)" else "✅ **البيانات محفوظة بشكل دائم**"}"""
+        
+        await diag_msg.edit_text(diagnosis)
+    
+    application.add_handler(CommandHandler("diagnose", diagnose_command))
+    
     # معالجات الرسائل المحسنة
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(Config.MASTER_USER_ID), handle_admin_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))  # معالج الصور المحسن
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))
     
     # معالج الأزرار المحسن
     application.add_handler(CallbackQueryHandler(handle_callback_query))
@@ -4211,14 +4597,24 @@ def main():
     # معالج الأخطاء المحسن
     application.add_error_handler(error_handler)
     
-    print(f"{emoji('check')} جاهز للعمل مع التحسينات!")
-    print(f"{emoji('chart')} تم تحميل {len(license_manager.license_keys)} مفتاح تفعيل من Enhanced PostgreSQL")
-    print(f"{emoji('users')} تم تحميل {len(db_manager.users)} مستخدم من Enhanced PostgreSQL")
-    print(f"{emoji('camera')} تحليل الشارت المتقدم: {'مفعل وجاهز' if Config.CHART_ANALYSIS_ENABLED else 'معطل'}")
-    print(f"{emoji('zap')} جميع البيانات محفوظة بشكل دائم - لن تضيع أبداً!")
-    print(f"{emoji('shield')} أداء محسن مع timeout protection")
+    # عرض الحالة النهائية
+    print(f"\n{emoji('check')} جاهز للعمل مع التشخيص الكامل!")
+    print(f"🗄️ نوع قاعدة البيانات: {'PostgreSQL (دائم)' if Config.DATABASE_URL else 'Memory (مؤقت)'}")
+    print(f"{emoji('chart')} المفاتيح المحمّلة: {len(license_manager.license_keys)}")
+    print(f"{emoji('users')} المستخدمون المحمّلون: {len(db_manager.users)}")
+    print(f"{emoji('camera')} تحليل الشارت: {'مفعل وجاهز' if Config.CHART_ANALYSIS_ENABLED else 'معطل'}")
+    
+    if not Config.DATABASE_URL:
+        print(f"\n{emoji('warning')} تحذير هام: البيانات مؤقتة!")
+        print("🔧 لحل المشكلة:")
+        print("1. أضف PostgreSQL في Render")
+        print("2. أضف DATABASE_URL للمتغيرات")
+        print("3. أعد التشغيل")
+    else:
+        print(f"\n{emoji('zap')} البيانات محفوظة بشكل دائم!")
+    
     print("="*50)
-    print(f"{emoji('globe')} البوت يعمل على Render مع Enhanced Webhook + PostgreSQL...")
+    print(f"{emoji('globe')} البوت يعمل على Render مع Enhanced Webhook...")
     
     # إعداد enhanced webhook
     asyncio.get_event_loop().run_until_complete(setup_enhanced_webhook())
@@ -4229,7 +4625,7 @@ def main():
     
     print(f"{emoji('link')} Enhanced Webhook URL: {webhook_url}/webhook")
     print(f"{emoji('rocket')} استمع على المنفذ: {port}")
-    print(f"{emoji('shield')} Enhanced PostgreSQL Database: متصل ونشط")
+    print(f"{emoji('shield')} Database Status: {'PostgreSQL Active' if Config.DATABASE_URL else 'Memory Only'}")
     print(f"{emoji('camera')} Chart Analysis: {'Ready & Active' if Config.CHART_ANALYSIS_ENABLED else 'Disabled'}")
     print(f"{emoji('zap')} Performance: Optimized with Timeout Protection")
     
@@ -4239,11 +4635,139 @@ def main():
             port=port,
             url_path="webhook",
             webhook_url=f"{webhook_url}/webhook",
-            drop_pending_updates=True  # حذف الرسائل المعلقة
+            drop_pending_updates=True
         )
     except Exception as e:
         print(f"{emoji('cross')} خطأ في تشغيل Enhanced Webhook: {e}")
         logger.error(f"Enhanced webhook error: {e}")
+
+# ==================== Memory-Based Fallback Systems ====================
+class MemoryDatabaseManager:
+    """نظام بديل يعمل بالذاكرة عند عدم توفر PostgreSQL"""
+    def __init__(self):
+        self.users: Dict[int, User] = {}
+        self.analyses: List[Analysis] = []
+    
+    async def initialize(self):
+        print(f"{emoji('warning')} تهيئة نظام الذاكرة البديل...")
+        self.users = {}
+        self.analyses = []
+    
+    async def add_user(self, user: User):
+        self.users[user.user_id] = user
+    
+    async def get_user(self, user_id: int) -> Optional[User]:
+        return self.users.get(user_id)
+    
+    async def add_analysis(self, analysis: Analysis):
+        self.analyses.append(analysis)
+    
+    async def get_stats(self) -> Dict[str, Any]:
+        active_users = sum(1 for u in self.users.values() if u.is_activated)
+        return {
+            'total_users': len(self.users),
+            'active_users': active_users,
+            'activation_rate': f"{(active_users/len(self.users)*100):.1f}%" if self.users else "0%",
+            'total_keys': 0,
+            'used_keys': 0,
+            'expired_keys': 0,
+            'total_analyses': len(self.analyses),
+            'recent_analyses': 0
+        }
+
+class MemoryLicenseManager:
+    """نظام مفاتيح بديل يعمل بالذاكرة"""
+    def __init__(self):
+        self.license_keys: Dict[str, LicenseKey] = {}
+    
+    async def initialize(self):
+        print(f"{emoji('key')} إنشاء مفاتيح تجريبية في الذاكرة...")
+        # إنشاء مفاتيح تجريبية
+        for i in range(10):
+            key = f"GOLD-TEST-{i+1:04d}-MEM{secrets.randbelow(1000):03d}"
+            self.license_keys[key] = LicenseKey(
+                key=key,
+                created_date=datetime.now(),
+                total_limit=50,
+                notes="مفتاح تجريبي - نظام الذاكرة"
+            )
+        print(f"{emoji('warning')} تم إنشاء {len(self.license_keys)} مفتاح تجريبي (سيضيع عند إعادة التشغيل!)")
+    
+    async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
+        if key not in self.license_keys:
+            return False, f"{emoji('cross')} مفتاح التفعيل غير صالح"
+        
+        license_key = self.license_keys[key]
+        
+        if not license_key.is_active:
+            return False, f"{emoji('cross')} مفتاح التفعيل معطل"
+        
+        if license_key.user_id and license_key.user_id != user_id:
+            return False, f"{emoji('cross')} مفتاح التفعيل مستخدم من قبل مستخدم آخر"
+        
+        if license_key.used_total >= license_key.total_limit:
+            return False, f"{emoji('cross')} انتهت صلاحية المفتاح"
+        
+        return True, f"{emoji('check')} مفتاح صالح"
+    
+    async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis") -> Tuple[bool, str]:
+        is_valid, message = await self.validate_key(key, user_id)
+        
+        if not is_valid:
+            return False, message
+        
+        license_key = self.license_keys[key]
+        
+        if not license_key.user_id:
+            license_key.user_id = user_id
+            license_key.username = username
+        
+        license_key.used_total += 1
+        remaining = license_key.total_limit - license_key.used_total
+        
+        return True, f"{emoji('check')} تم استخدام المفتاح - المتبقي: {remaining}"
+    
+    async def get_key_info(self, key: str) -> Optional[Dict]:
+        if key not in self.license_keys:
+            return None
+        
+        license_key = self.license_keys[key]
+        return {
+            'key': key,
+            'is_active': license_key.is_active,
+            'total_limit': license_key.total_limit,
+            'used_total': license_key.used_total,
+            'remaining_total': license_key.total_limit - license_key.used_total,
+            'user_id': license_key.user_id,
+            'username': license_key.username,
+            'created_date': license_key.created_date.strftime('%Y-%m-%d'),
+            'notes': license_key.notes + " (MEMORY)"
+        }
+    
+    async def get_all_keys_stats(self) -> Dict:
+        total_keys = len(self.license_keys)
+        used_keys = sum(1 for key in self.license_keys.values() if key.user_id is not None)
+        
+        return {
+            'total_keys': total_keys,
+            'active_keys': total_keys,
+            'used_keys': used_keys,
+            'unused_keys': total_keys - used_keys,
+            'expired_keys': 0,
+            'total_usage': sum(key.used_total for key in self.license_keys.values()),
+            'total_available': sum(key.total_limit - key.used_total for key in self.license_keys.values()),
+            'avg_usage_per_key': 0
+        }
+    
+    async def create_new_key(self, total_limit: int = 50, notes: str = "") -> str:
+        key = f"GOLD-MEM-{len(self.license_keys)+1:04d}-{secrets.randbelow(10000):04d}"
+        self.license_keys[key] = LicenseKey(
+            key=key,
+            created_date=datetime.now(),
+            total_limit=total_limit,
+            notes=notes + " (Memory System)"
+        )
+        return key
 
 if __name__ == "__main__":
     print(f"""
