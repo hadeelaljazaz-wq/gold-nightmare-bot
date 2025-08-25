@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Gold Nightmare Bot - Complete Advanced Analysis & Risk Management System
-بوت تحليل الذهب الاحترافي مع نظام مفاتيح التفعيل المتقدم - إصدار محدث للبيانات الدائمة
-Version: 6.1 Professional Enhanced - Persistent PostgreSQL Edition
+بوت تحليل الذهب الاحترافي مع نظام مفاتيح التفعيل المتقدم
+Version: 6.0 Professional Enhanced - Render Webhook Edition
 Author: odai - Gold Nightmare School
 """
 
@@ -27,10 +27,7 @@ import pytz
 from functools import wraps
 import pickle
 import aiofiles
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import asyncpg
-from urllib.parse import urlparse
+
 # Telegram imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -136,8 +133,7 @@ EMOJIS = {
     'top': '🔝',
     'bottom': '🔻',
     'up': '⬆️',
-    'down': '⬇️',
-    'plus': '➕'
+    'down': '⬇️'
 }
 
 # دالة مساعدة لاستخدام الـ emojis
@@ -175,7 +171,8 @@ class Config:
     MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "1568"))
     
     # Database
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    DB_PATH = os.getenv("DB_PATH", "gold_bot_data.db")
+    KEYS_FILE = os.getenv("KEYS_FILE", "license_keys.json")
     
     # Timezone
     TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Asia/Amman"))
@@ -305,325 +302,42 @@ class AnalysisType(Enum):
     REVERSAL = "REVERSAL"
     NIGHTMARE = "NIGHTMARE"
 
-# ==================== PostgreSQL Database Manager ====================
-class PostgreSQLManager:
-    def __init__(self):
-        self.database_url = Config.DATABASE_URL
-        self.pool = None
-    
-    async def initialize(self):
-        """تهيئة قاعدة البيانات وإنشاء الجداول"""
-        try:
-            self.pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=5)
-            await self.create_tables()
-            print(f"{emoji('check')} تم الاتصال بـ PostgreSQL بنجاح")
-        except Exception as e:
-            print(f"{emoji('cross')} خطأ في الاتصال بقاعدة البيانات: {e}")
-            raise
-    
-    async def create_tables(self):
-        """إنشاء الجداول المطلوبة"""
-        async with self.pool.acquire() as conn:
-            # جدول المستخدمين
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT NOT NULL,
-                    is_activated BOOLEAN DEFAULT FALSE,
-                    activation_date TIMESTAMP,
-                    last_activity TIMESTAMP DEFAULT NOW(),
-                    total_requests INTEGER DEFAULT 0,
-                    total_analyses INTEGER DEFAULT 0,
-                    subscription_tier TEXT DEFAULT 'basic',
-                    settings JSONB DEFAULT '{}',
-                    license_key TEXT,
-                    daily_requests_used INTEGER DEFAULT 0,
-                    last_request_date DATE,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW()
-                )
-            """)
-            
-            # جدول مفاتيح التفعيل - هنا التعديل الأساسي
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS license_keys (
-                    key TEXT PRIMARY KEY,
-                    created_date TIMESTAMP NOT NULL,
-                    total_limit INTEGER DEFAULT 50,
-                    used_total INTEGER DEFAULT 0,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    user_id BIGINT,
-                    username TEXT,
-                    notes TEXT DEFAULT '',
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW()
-                )
-            """)
-            
-            # جدول التحليلات
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS analyses (
-                    id TEXT PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    timestamp TIMESTAMP NOT NULL,
-                    analysis_type TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    gold_price DECIMAL(10,2) NOT NULL,
-                    image_data BYTEA,
-                    indicators JSONB DEFAULT '{}',
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            """)
-            
-            # إنشاء الفهارس
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_license_key ON users(license_key)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_license_keys_user_id ON license_keys(user_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_analyses_timestamp ON analyses(timestamp)")
-            
-            print(f"{emoji('check')} تم إنشاء/التحقق من الجداول")
-    
-    async def save_user(self, user: User):
-        """حفظ/تحديث بيانات المستخدم"""
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO users (user_id, username, first_name, is_activated, activation_date, 
-                                 last_activity, total_requests, total_analyses, subscription_tier, 
-                                 settings, license_key, daily_requests_used, last_request_date, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    is_activated = EXCLUDED.is_activated,
-                    activation_date = EXCLUDED.activation_date,
-                    last_activity = EXCLUDED.last_activity,
-                    total_requests = EXCLUDED.total_requests,
-                    total_analyses = EXCLUDED.total_analyses,
-                    subscription_tier = EXCLUDED.subscription_tier,
-                    settings = EXCLUDED.settings,
-                    license_key = EXCLUDED.license_key,
-                    daily_requests_used = EXCLUDED.daily_requests_used,
-                    last_request_date = EXCLUDED.last_request_date,
-                    updated_at = NOW()
-            """, user.user_id, user.username, user.first_name, user.is_activated, 
-                 user.activation_date, user.last_activity, user.total_requests, 
-                 user.total_analyses, user.subscription_tier, json.dumps(user.settings),
-                 user.license_key, user.daily_requests_used, user.last_request_date)
-    
-    async def get_user(self, user_id: int) -> Optional[User]:
-        """جلب بيانات المستخدم"""
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-            if row:
-                return User(
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    first_name=row['first_name'],
-                    is_activated=row['is_activated'],
-                    activation_date=row['activation_date'],
-                    last_activity=row['last_activity'],
-                    total_requests=row['total_requests'],
-                    total_analyses=row['total_analyses'],
-                    subscription_tier=row['subscription_tier'],
-                    settings=row['settings'] or {},
-                    license_key=row['license_key'],
-                    daily_requests_used=row['daily_requests_used'],
-                    last_request_date=row['last_request_date']
-                )
-            return None
-    
-    async def get_all_users(self) -> List[User]:
-        """جلب جميع المستخدمين"""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM users")
-            users = []
-            for row in rows:
-                users.append(User(
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    first_name=row['first_name'],
-                    is_activated=row['is_activated'],
-                    activation_date=row['activation_date'],
-                    last_activity=row['last_activity'],
-                    total_requests=row['total_requests'],
-                    total_analyses=row['total_analyses'],
-                    subscription_tier=row['subscription_tier'],
-                    settings=row['settings'] or {},
-                    license_key=row['license_key'],
-                    daily_requests_used=row['daily_requests_used'],
-                    last_request_date=row['last_request_date']
-                ))
-            return users
-    
-    # ===================== مفاتيح التفعيل في PostgreSQL =====================
-    async def save_license_key(self, license_key: LicenseKey):
-        """حفظ/تحديث مفتاح التفعيل في قاعدة البيانات"""
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO license_keys (key, created_date, total_limit, used_total, 
-                                        is_active, user_id, username, notes, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                ON CONFLICT (key) DO UPDATE SET
-                    total_limit = EXCLUDED.total_limit,
-                    used_total = EXCLUDED.used_total,
-                    is_active = EXCLUDED.is_active,
-                    user_id = EXCLUDED.user_id,
-                    username = EXCLUDED.username,
-                    notes = EXCLUDED.notes,
-                    updated_at = NOW()
-            """, license_key.key, license_key.created_date, license_key.total_limit,
-                 license_key.used_total, license_key.is_active, license_key.user_id,
-                 license_key.username, license_key.notes)
-    
-    async def get_license_key(self, key: str) -> Optional[LicenseKey]:
-        """جلب مفتاح تفعيل من قاعدة البيانات"""
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM license_keys WHERE key = $1", key)
-            if row:
-                return LicenseKey(
-                    key=row['key'],
-                    created_date=row['created_date'],
-                    total_limit=row['total_limit'],
-                    used_total=row['used_total'],
-                    is_active=row['is_active'],
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    notes=row['notes'] or ''
-                )
-            return None
-    
-    async def get_all_license_keys(self) -> Dict[str, LicenseKey]:
-        """جلب جميع مفاتيح التفعيل"""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM license_keys")
-            keys = {}
-            for row in rows:
-                keys[row['key']] = LicenseKey(
-                    key=row['key'],
-                    created_date=row['created_date'],
-                    total_limit=row['total_limit'],
-                    used_total=row['used_total'],
-                    is_active=row['is_active'],
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    notes=row['notes'] or ''
-                )
-            return keys
-    
-    async def delete_license_key(self, key: str) -> bool:
-        """حذف مفتاح تفعيل"""
-        async with self.pool.acquire() as conn:
-            result = await conn.execute("DELETE FROM license_keys WHERE key = $1", key)
-            return result == "DELETE 1"
-    
-    async def save_analysis(self, analysis: Analysis):
-        """حفظ تحليل"""
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO analyses (id, user_id, timestamp, analysis_type, prompt, result, 
-                                    gold_price, image_data, indicators)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (id) DO NOTHING
-            """, analysis.id, analysis.user_id, analysis.timestamp, analysis.analysis_type,
-                 analysis.prompt, analysis.result, analysis.gold_price, analysis.image_data,
-                 json.dumps(analysis.indicators))
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """جلب إحصائيات عامة"""
-        async with self.pool.acquire() as conn:
-            # إحصائيات المستخدمين
-            total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            active_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE is_activated = TRUE")
-            
-            # إحصائيات المفاتيح
-            total_keys = await conn.fetchval("SELECT COUNT(*) FROM license_keys")
-            used_keys = await conn.fetchval("SELECT COUNT(*) FROM license_keys WHERE user_id IS NOT NULL")
-            expired_keys = await conn.fetchval("SELECT COUNT(*) FROM license_keys WHERE used_total >= total_limit")
-            
-            # إحصائيات التحليلات
-            total_analyses = await conn.fetchval("SELECT COUNT(*) FROM analyses")
-            
-            # آخر 24 ساعة
-            yesterday = datetime.now() - timedelta(hours=24)
-            recent_analyses = await conn.fetchval("SELECT COUNT(*) FROM analyses WHERE timestamp > $1", yesterday)
-            
-            return {
-                'total_users': total_users or 0,
-                'active_users': active_users or 0,
-                'activation_rate': f"{(active_users/total_users*100):.1f}%" if total_users > 0 else "0%",
-                'total_keys': total_keys or 0,
-                'used_keys': used_keys or 0,
-                'expired_keys': expired_keys or 0,
-                'total_analyses': total_analyses or 0,
-                'recent_analyses': recent_analyses or 0
-            }
-    
-    async def close(self):
-        """إغلاق اتصال قاعدة البيانات"""
-        if self.pool:
-            await self.pool.close()
-
-# ==================== License Manager المُحدث للـ PostgreSQL ====================
-class PersistentLicenseManager:
-    """إدارة المفاتيح مع حفظ دائم في PostgreSQL"""
-    
-    def __init__(self, postgresql_manager: PostgreSQLManager):
-        self.postgresql = postgresql_manager
+# ==================== License Manager ====================
+class LicenseManager:
+    def __init__(self, keys_file: str = None):
+        self.keys_file = keys_file or Config.KEYS_FILE
         self.license_keys: Dict[str, LicenseKey] = {}
         
     async def initialize(self):
-        """تحميل المفاتيح من قاعدة البيانات وإنشاء المفاتيح الأولية إذا لزم الأمر"""
-        await self.load_keys_from_db()
+        """تحميل المفاتيح وإنشاء المفاتيح الأولية"""
+        await self.load_keys()
         
-        # إنشاء مفاتيح أولية إذا لم تكن موجودة
         if len(self.license_keys) == 0:
-            print(f"{emoji('info')} لا توجد مفاتيح في قاعدة البيانات، سيتم إنشاء مفاتيح أولية...")
             await self.generate_initial_keys(40)
-            print(f"{emoji('check')} تم إنشاء {len(self.license_keys)} مفتاح أولي")
-        else:
-            print(f"{emoji('check')} تم تحميل {len(self.license_keys)} مفتاح من قاعدة البيانات")
-    
-    async def load_keys_from_db(self):
-        """تحميل جميع المفاتيح من قاعدة البيانات"""
-        try:
-            self.license_keys = await self.postgresql.get_all_license_keys()
-            print(f"{emoji('key')} تم تحميل {len(self.license_keys)} مفتاح من PostgreSQL")
-        except Exception as e:
-            print(f"{emoji('cross')} خطأ في تحميل المفاتيح من قاعدة البيانات: {e}")
-            self.license_keys = {}
+            await self.save_keys()
     
     async def generate_initial_keys(self, count: int = 40):
-        """إنشاء المفاتيح الأولية وحفظها في قاعدة البيانات"""
-        print(f"{emoji('key')} إنشاء {count} مفتاح تفعيل أولي...")
+        """إنشاء المفاتيح الأولية - 50 سؤال لكل مفتاح"""
+        print(f"{emoji('key')} إنشاء {count} مفتاح تفعيل...")
         
-        created_keys = []
         for i in range(count):
             key = self.generate_unique_key()
             license_key = LicenseKey(
                 key=key,
                 created_date=datetime.now(),
                 total_limit=50,  # 50 سؤال إجمالي
-                notes=f"مفتاح أولي رقم {i+1} - تم الإنشاء تلقائياً"
+                notes=f"مفتاح أولي رقم {i+1}"
             )
-            
-            # حفظ في قاعدة البيانات
-            await self.postgresql.save_license_key(license_key)
-            
-            # إضافة للذاكرة
             self.license_keys[key] = license_key
-            created_keys.append(key)
         
-        print(f"{emoji('check')} تم إنشاء وحفظ {count} مفتاح في قاعدة البيانات!")
+        print(f"{emoji('check')} تم إنشاء {count} مفتاح بنجاح!")
         print("\n" + "="*70)
-        print(f"{emoji('key')} مفاتيح التفعيل المُنشأة (تم حفظها في قاعدة البيانات):")
+        print(f"{emoji('key')} مفاتيح التفعيل المُنشأة (احفظها في مكان آمن):")
         print("="*70)
-        for i, key in enumerate(created_keys, 1):
+        for i, (key, _) in enumerate(self.license_keys.items(), 1):
             print(f"{i:2d}. {key}")
         print("="*70)
         print(f"{emoji('info')} كل مفتاح يعطي 50 سؤال إجمالي وينتهي")
-        print(f"{emoji('zap')} المفاتيح محفوظة بشكل دائم في PostgreSQL")
         print("="*70)
     
     def generate_unique_key(self) -> str:
@@ -642,7 +356,7 @@ class PersistentLicenseManager:
                 return key
     
     async def create_new_key(self, total_limit: int = 50, notes: str = "") -> str:
-        """إنشاء مفتاح جديد وحفظه في قاعدة البيانات"""
+        """إنشاء مفتاح جديد"""
         key = self.generate_unique_key()
         license_key = LicenseKey(
             key=key,
@@ -650,23 +364,65 @@ class PersistentLicenseManager:
             total_limit=total_limit,
             notes=notes
         )
-        
-        # حفظ في قاعدة البيانات
-        await self.postgresql.save_license_key(license_key)
-        
-        # إضافة للذاكرة
         self.license_keys[key] = license_key
-        
-        print(f"{emoji('check')} تم إنشاء وحفظ مفتاح جديد: {key}")
+        await self.save_keys()
         return key
     
+    async def load_keys(self):
+        """تحميل المفاتيح من الملف"""
+        try:
+            async with aiofiles.open(self.keys_file, 'r', encoding='utf-8') as f:
+                data = json.loads(await f.read())
+                
+                for key_data in data.get('keys', []):
+                    key = LicenseKey(
+                        key=key_data['key'],
+                        created_date=datetime.fromisoformat(key_data['created_date']),
+                        total_limit=key_data.get('total_limit', 50),  # تحديث للنظام الجديد
+                        used_total=key_data.get('used_total', 0),
+                        is_active=key_data.get('is_active', True),
+                        user_id=key_data.get('user_id'),
+                        username=key_data.get('username'),
+                        notes=key_data.get('notes', '')
+                    )
+                    self.license_keys[key.key] = key
+                
+                print(f"{emoji('check')} تم تحميل {len(self.license_keys)} مفتاح")
+                
+        except FileNotFoundError:
+            print(f"{emoji('magnifier')} ملف المفاتيح غير موجود، سيتم إنشاؤه")
+            self.license_keys = {}
+        except Exception as e:
+            print(f"{emoji('cross')} خطأ في تحميل المفاتيح: {e}")
+            self.license_keys = {}
+    
+    async def save_keys(self):
+        """حفظ المفاتيح في الملف"""
+        try:
+            data = {
+                'keys': [
+                    {
+                        'key': key.key,
+                        'created_date': key.created_date.isoformat(),
+                        'total_limit': key.total_limit,
+                        'used_total': key.used_total,
+                        'is_active': key.is_active,
+                        'user_id': key.user_id,
+                        'username': key.username,
+                        'notes': key.notes
+                    }
+                    for key in self.license_keys.values()
+                ]
+            }
+            
+            async with aiofiles.open(self.keys_file, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+                
+        except Exception as e:
+            print(f"{emoji('cross')} خطأ في حفظ المفاتيح: {e}")
+    
     async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
-        """فحص صحة المفتاح - يتحقق من قاعدة البيانات دائماً"""
-        # تحديث البيانات من قاعدة البيانات للتأكد من الحداثة
-        db_key = await self.postgresql.get_license_key(key)
-        if db_key:
-            self.license_keys[key] = db_key
-        
+        """فحص صحة المفتاح - نظام 50 سؤال"""
         if key not in self.license_keys:
             return False, f"{emoji('cross')} مفتاح التفعيل غير صالح"
         
@@ -684,7 +440,7 @@ class PersistentLicenseManager:
         return True, f"{emoji('check')} مفتاح صالح"
     
     async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis") -> Tuple[bool, str]:
-        """استخدام المفتاح مع الحفظ المباشر في قاعدة البيانات"""
+        """استخدام المفتاح - نظام 50 سؤال"""
         is_valid, message = await self.validate_key(key, user_id)
         
         if not is_valid:
@@ -692,16 +448,13 @@ class PersistentLicenseManager:
         
         license_key = self.license_keys[key]
         
-        # ربط المستخدم بالمفتاح إذا لم يكن مربوطاً
         if not license_key.user_id:
             license_key.user_id = user_id
             license_key.username = username
         
-        # زيادة عداد الاستخدام
         license_key.used_total += 1
         
-        # حفظ التحديث في قاعدة البيانات فوراً
-        await self.postgresql.save_license_key(license_key)
+        await self.save_keys()
         
         remaining = license_key.total_limit - license_key.used_total
         
@@ -713,12 +466,7 @@ class PersistentLicenseManager:
             return True, f"{emoji('check')} تم استخدام المفتاح بنجاح\n{emoji('chart')} الأسئلة المتبقية: {remaining} من {license_key.total_limit}"
     
     async def get_key_info(self, key: str) -> Optional[Dict]:
-        """الحصول على معلومات المفتاح مع التحديث من قاعدة البيانات"""
-        # تحديث من قاعدة البيانات
-        db_key = await self.postgresql.get_license_key(key)
-        if db_key:
-            self.license_keys[key] = db_key
-        
+        """الحصول على معلومات المفتاح"""
         if key not in self.license_keys:
             return None
         
@@ -737,10 +485,7 @@ class PersistentLicenseManager:
         }
     
     async def get_all_keys_stats(self) -> Dict:
-        """إحصائيات جميع المفاتيح مع التحديث من قاعدة البيانات"""
-        # تحديث البيانات من قاعدة البيانات
-        await self.load_keys_from_db()
-        
+        """إحصائيات جميع المفاتيح"""
         total_keys = len(self.license_keys)
         active_keys = sum(1 for key in self.license_keys.values() if key.is_active)
         used_keys = sum(1 for key in self.license_keys.values() if key.user_id is not None)
@@ -761,12 +506,7 @@ class PersistentLicenseManager:
         }
     
     async def delete_user_by_key(self, key: str) -> Tuple[bool, str]:
-        """حذف مستخدم من المفتاح وإعادة تعيين الاستخدام مع الحفظ في قاعدة البيانات"""
-        # تحديث من قاعدة البيانات
-        db_key = await self.postgresql.get_license_key(key)
-        if db_key:
-            self.license_keys[key] = db_key
-        
+        """حذف مستخدم من المفتاح وإعادة تعيين الاستخدام"""
         if key not in self.license_keys:
             return False, f"{emoji('cross')} المفتاح غير موجود"
         
@@ -777,54 +517,80 @@ class PersistentLicenseManager:
         old_user_id = license_key.user_id
         old_username = license_key.username
         
-        # إعادة تعيين المفتاح
         license_key.user_id = None
         license_key.username = None
         license_key.used_total = 0  # إعادة تعيين العداد
         
-        # حفظ التحديث في قاعدة البيانات
-        await self.postgresql.save_license_key(license_key)
+        await self.save_keys()
         
-        return True, f"{emoji('check')} تم حذف المستخدم {old_username or old_user_id} من المفتاح {key}\n{emoji('refresh')} تم إعادة تعيين العداد إلى 0\n{emoji('zap')} تم الحفظ في قاعدة البيانات"
+        return True, f"{emoji('check')} تم حذف المستخدم {old_username or old_user_id} من المفتاح {key}\n{emoji('refresh')} تم إعادة تعيين العداد إلى 0"
 
-# ==================== Database Manager المُحدث ====================
-class PersistentDatabaseManager:
-    def __init__(self, postgresql_manager: PostgreSQLManager):
-        self.postgresql = postgresql_manager
+# ==================== Database Manager ====================
+class DatabaseManager:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
         self.users: Dict[int, User] = {}
         self.analyses: List[Analysis] = []
         
-    async def initialize(self):
-        """تحميل البيانات من قاعدة البيانات"""
+    async def load_data(self):
+        """تحميل البيانات"""
         try:
-            users_list = await self.postgresql.get_all_users()
-            self.users = {user.user_id: user for user in users_list}
-            print(f"{emoji('users')} تم تحميل {len(self.users)} مستخدم من قاعدة البيانات")
+            if os.path.exists(self.db_path):
+                async with aiofiles.open(self.db_path, 'rb') as f:
+                    data = pickle.loads(await f.read())
+                    self.users = data.get('users', {})
+                    self.analyses = data.get('analyses', [])
+                    logger.info(f"Loaded {len(self.users)} users and {len(self.analyses)} analyses")
         except Exception as e:
-            print(f"{emoji('cross')} خطأ في تحميل المستخدمين: {e}")
-            self.users = {}
-        
+            logger.error(f"Error loading database: {e}")
+    
+    async def save_data(self):
+        """حفظ البيانات"""
+        try:
+            data = {
+                'users': self.users,
+                'analyses': self.analyses
+            }
+            async with aiofiles.open(self.db_path, 'wb') as f:
+                await f.write(pickle.dumps(data))
+        except Exception as e:
+            logger.error(f"Error saving database: {e}")
+    
     async def add_user(self, user: User):
-        """إضافة/تحديث مستخدم مع الحفظ في قاعدة البيانات"""
+        """إضافة مستخدم"""
         self.users[user.user_id] = user
-        await self.postgresql.save_user(user)
+        await self.save_data()
     
     async def get_user(self, user_id: int) -> Optional[User]:
-        """جلب مستخدم مع التحديث من قاعدة البيانات"""
-        # محاولة جلب من قاعدة البيانات للحصول على أحدث البيانات
-        user = await self.postgresql.get_user(user_id)
-        if user:
-            self.users[user_id] = user
-        return user
+        """جلب مستخدم"""
+        return self.users.get(user_id)
     
     async def add_analysis(self, analysis: Analysis):
-        """إضافة تحليل مع الحفظ في قاعدة البيانات"""
+        """إضافة تحليل"""
         self.analyses.append(analysis)
-        await self.postgresql.save_analysis(analysis)
+        await self.save_data()
+    
+    async def get_user_analyses(self, user_id: int, limit: int = 10) -> List[Analysis]:
+        """جلب تحليلات المستخدم"""
+        user_analyses = [a for a in self.analyses if a.user_id == user_id]
+        return user_analyses[-limit:]
     
     async def get_stats(self) -> Dict[str, Any]:
-        """إحصائيات البوت من قاعدة البيانات"""
-        return await self.postgresql.get_stats()
+        """إحصائيات البوت"""
+        total_users = len(self.users)
+        active_users = len([u for u in self.users.values() if u.is_activated])
+        total_analyses = len(self.analyses)
+        
+        last_24h = datetime.now() - timedelta(hours=24)
+        recent_analyses = [a for a in self.analyses if a.timestamp > last_24h]
+        
+        return {
+            'total_users': total_users,
+            'active_users': active_users,
+            'total_analyses': total_analyses,
+            'analyses_24h': len(recent_analyses),
+            'activation_rate': f"{(active_users/total_users*100):.1f}%" if total_users > 0 else "0%"
+        }
 
 # ==================== Cache System ====================
 class CacheManager:
@@ -1418,7 +1184,7 @@ def require_activation_with_key_usage(analysis_type="general"):
                 await update.message.reply_text(f"{emoji('cross')} حسابك محظور. تواصل مع الدعم.")
                 return
             
-            # جلب المستخدم مع التحديث من قاعدة البيانات
+            # جلب المستخدم
             user = await context.bot_data['db'].get_user(user_id)
             if not user:
                 user = User(
@@ -1510,7 +1276,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 │  {emoji('check')} <b>حسابك مُفعَّل ومجهز للعمل</b>   │
 │  {emoji('target')} الأسئلة المتبقية: <b>{remaining_msgs}</b>        │
 │  {emoji('info')} المفتاح ينتهي بعد استنفاد الأسئلة   │
-│  {emoji('zap')} البيانات محفوظة في PostgreSQL    │
 └─────────────────────────────────────┘
 
 {emoji('target')} <b>اختر نوع التحليل المطلوب:</b>"""
@@ -1519,7 +1284,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_message = f"""╔══════════════════════════════════════╗
 ║   {emoji('diamond')} <b>Gold Nightmare Academy</b> {emoji('diamond')}   ║
 ║     أقوى منصة تحليل الذهب بالعالم     ║
-║      {emoji('zap')} إصدار PostgreSQL الدائم      ║
 ╚══════════════════════════════════════╝
 
 {emoji('wave')} مرحباً <b>{update.effective_user.first_name}</b>!
@@ -1534,7 +1298,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 │ {emoji('shield')} <b>إدارة مخاطر احترافية</b> مؤسسية           │
 │ {emoji('up_arrow')} <b>توقعات مستقبلية</b> مع نسب ثقة دقيقة        │
 │ {emoji('fire')} <b>تحليل شامل متقدم</b> للمحترفين              │
-│ {emoji('zap')} <b>حفظ دائم</b> - لا تفقد بياناتك أبداً        │
 │                                               │
 └───────────────────────────────────────────────┘
 
@@ -1547,7 +1310,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
    {emoji('target')} وصول للتحليل الشامل المتقدم
    {emoji('phone')} دعم فني مباشر
    {emoji('info')} المفتاح ينتهي بعد 50 سؤال
-   {emoji('zap')} بياناتك محفوظة بشكل دائم
 
 {emoji('info')} <b>للحصول على مفتاح التفعيل:</b>
 تواصل مع المطور المختص"""
@@ -1575,15 +1337,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر تفعيل المفتاح - مُحدث للـ PostgreSQL"""
+    """أمر تفعيل المفتاح"""
     user_id = update.effective_user.id
     
     if not context.args:
         await update.message.reply_text(
             f"{emoji('key')} تفعيل مفتاح الترخيص\n\n"
             "الاستخدام: /license مفتاح_التفعيل\n\n"
-            "مثال: /license GOLD-ABC1-DEF2-GHI3\n\n"
-            f"{emoji('zap')} البيانات محفوظة بشكل دائم في PostgreSQL"
+            "مثال: /license GOLD-ABC1-DEF2-GHI3"
         )
         return
     
@@ -1619,7 +1380,6 @@ async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {emoji('chart')} الحد الإجمالي: {key_info['total_limit']} سؤال
 {emoji('up_arrow')} المتبقي: {key_info['remaining_total']} سؤال
 {emoji('info')} المفتاح ينتهي بعد استنفاد الأسئلة
-{emoji('zap')} تم الحفظ في PostgreSQL - بياناتك آمنة!
 
 {emoji('star')} يمكنك الآن استخدام البوت والحصول على التحليلات المتقدمة!"""
 
@@ -1636,7 +1396,7 @@ async def license_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def create_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إنشاء مفاتيح جديدة مع الحفظ في PostgreSQL"""
+    """إنشاء مفاتيح جديدة"""
     count = 1
     total_limit = 50
     
@@ -1655,7 +1415,7 @@ async def create_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     license_manager = context.bot_data['license_manager']
     
-    status_msg = await update.message.reply_text(f"{emoji('clock')} جاري إنشاء {count} مفتاح وحفظها في PostgreSQL...")
+    status_msg = await update.message.reply_text(f"{emoji('clock')} جاري إنشاء {count} مفتاح...")
     
     created_keys = []
     for i in range(count):
@@ -1671,32 +1431,27 @@ async def create_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 {emoji('chart')} الحد الإجمالي: {total_limit} أسئلة لكل مفتاح
 {emoji('info')} المفتاح ينتهي بعد استنفاد الأسئلة
-{emoji('zap')} تم الحفظ في قاعدة بيانات PostgreSQL
 
 {emoji('key')} المفاتيح:
 {keys_text}
 
 {emoji('info')} تعليمات للمستخدمين:
 • كل مفتاح يعطي {total_limit} سؤال إجمالي
-• استخدام: /license GOLD-XXXX-XXXX-XXXX
-• البيانات محفوظة بشكل دائم"""
+• استخدام: /license GOLD-XXXX-XXXX-XXXX"""
     
     await status_msg.edit_text(result_message)
 
 @admin_only
 async def keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض جميع المفاتيح للمشرف - مُحدث للـ PostgreSQL"""
+    """عرض جميع المفاتيح للمشرف"""
     license_manager = context.bot_data['license_manager']
-    
-    # تحديث البيانات من قاعدة البيانات
-    await license_manager.load_keys_from_db()
     
     if not license_manager.license_keys:
         await update.message.reply_text(f"{emoji('cross')} لا توجد مفاتيح")
         return
     
     # إعداد الرسالة
-    message = f"{emoji('key')} جميع مفاتيح التفعيل (من PostgreSQL):\n\n"
+    message = f"{emoji('key')} جميع مفاتيح التفعيل:\n\n"
     
     # إحصائيات عامة
     stats = await license_manager.get_all_keys_stats()
@@ -1706,8 +1461,7 @@ async def keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += f"• المفاتيح الفارغة: {stats['unused_keys']}\n"
     message += f"• المفاتيح المنتهية: {stats['expired_keys']}\n"
     message += f"• الاستخدام الإجمالي: {stats['total_usage']}\n"
-    message += f"• المتاح الإجمالي: {stats['total_available']}\n"
-    message += f"{emoji('zap')} محفوظة في PostgreSQL\n\n"
+    message += f"• المتاح الإجمالي: {stats['total_available']}\n\n"
     
     # عرض أول 10 مفاتيح مع تفاصيل كاملة
     count = 0
@@ -1734,11 +1488,8 @@ async def keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def unused_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض المفاتيح غير المستخدمة فقط - مُحدث للـ PostgreSQL"""
+    """عرض المفاتيح غير المستخدمة فقط"""
     license_manager = context.bot_data['license_manager']
-    
-    # تحديث البيانات من قاعدة البيانات
-    await license_manager.load_keys_from_db()
     
     unused_keys = [key for key, license_key in license_manager.license_keys.items() 
                    if not license_key.user_id and license_key.is_active]
@@ -1747,8 +1498,7 @@ async def unused_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"{emoji('cross')} لا توجد مفاتيح متاحة")
         return
     
-    message = f"{emoji('prohibited')} المفاتيح المتاحة ({len(unused_keys)} مفتاح):\n"
-    message += f"{emoji('zap')} محفوظة في PostgreSQL\n\n"
+    message = f"{emoji('prohibited')} المفاتيح المتاحة ({len(unused_keys)} مفتاح):\n\n"
     
     for i, key in enumerate(unused_keys, 1):
         license_key = license_manager.license_keys[key]
@@ -1769,20 +1519,18 @@ GOLD-XXXX-XXXX-XXXX
 {emoji('warning')} ملاحظات مهمة:
 • لديك 50 سؤال إجمالي
 • {emoji('info')} المفتاح ينتهي بعد استنفاد الأسئلة
-• {emoji('zap')} بياناتك محفوظة في PostgreSQL
 ```"""
     
     await send_long_message(update, message)
 
 @admin_only
 async def delete_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حذف مستخدم من مفتاح - مُحدث للـ PostgreSQL"""
+    """حذف مستخدم من مفتاح"""
     if not context.args:
         await update.message.reply_text(
             f"{emoji('cross')} حذف مستخدم من مفتاح\n\n"
             "الاستخدام: /deleteuser مفتاح_التفعيل\n\n"
-            "مثال: /deleteuser GOLD-ABC1-DEF2-GHI3\n\n"
-            f"{emoji('zap')} التحديث سيتم حفظه في PostgreSQL"
+            "مثال: /deleteuser GOLD-ABC1-DEF2-GHI3"
         )
         return
     
@@ -1795,26 +1543,14 @@ async def delete_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إنشاء نسخة احتياطية - مُحدث للـ PostgreSQL"""
+    """إنشاء نسخة احتياطية"""
     try:
         db_manager = context.bot_data['db']
         license_manager = context.bot_data['license_manager']
         
-        # تحديث البيانات من قاعدة البيانات
-        await license_manager.load_keys_from_db()
-        users_list = await db_manager.postgresql.get_all_users()
-        db_manager.users = {user.user_id: user for user in users_list}
-        
-        # إحصائيات من قاعدة البيانات
-        stats = await db_manager.get_stats()
-        
         # إنشاء النسخة الاحتياطية
         backup_data = {
             'timestamp': datetime.now().isoformat(),
-            'database_type': 'PostgreSQL',
-            'users_count': len(db_manager.users),
-            'keys_count': len(license_manager.license_keys),
-            'total_analyses': stats['total_analyses'],
             'users': {str(k): {
                 'user_id': v.user_id,
                 'username': v.username,
@@ -1832,24 +1568,22 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'used_total': v.used_total,
                 'user_id': v.user_id,
                 'username': v.username,
-                'is_active': v.is_active,
-                'notes': v.notes
+                'is_active': v.is_active
             } for k, v in license_manager.license_keys.items()},
+            'analyses_count': len(db_manager.analyses)
         }
         
         # حفظ في ملف
-        backup_filename = f"backup_postgresql_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         async with aiofiles.open(backup_filename, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(backup_data, ensure_ascii=False, indent=2))
         
         await update.message.reply_text(
             f"{emoji('check')} **تم إنشاء النسخة الاحتياطية**\n\n"
             f"{emoji('folder')} الملف: `{backup_filename}`\n"
-            f"{emoji('users')} المستخدمين: {backup_data['users_count']}\n"
-            f"{emoji('key')} المفاتيح: {backup_data['keys_count']}\n"
-            f"{emoji('up_arrow')} التحليلات: {backup_data['total_analyses']}\n"
-            f"{emoji('zap')} المصدر: PostgreSQL Database\n\n"
-            f"{emoji('info')} النسخة الاحتياطية تحتوي على جميع البيانات الدائمة"
+            f"{emoji('users')} المستخدمين: {len(backup_data['users'])}\n"
+            f"{emoji('key')} المفاتيح: {len(backup_data['license_keys'])}\n"
+            f"{emoji('up_arrow')} التحليلات: {backup_data['analyses_count']}"
         )
         
     except Exception as e:
@@ -1858,42 +1592,41 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إحصائيات سريعة للأدمن - مُحدث للـ PostgreSQL"""
+    """إحصائيات سريعة للأدمن"""
     try:
         db_manager = context.bot_data['db']
         license_manager = context.bot_data['license_manager']
         
-        # الحصول على الإحصائيات من قاعدة البيانات
-        stats = await db_manager.get_stats()
-        keys_stats = await license_manager.get_all_keys_stats()
+        # إحصائيات أساسية
+        total_users = len(db_manager.users)
+        active_users = len([u for u in db_manager.users.values() if u.is_activated])
+        total_keys = len(license_manager.license_keys)
+        used_keys = len([k for k in license_manager.license_keys.values() if k.user_id])
         
-        # استخدام إجمالي من قاعدة البيانات
-        async with db_manager.postgresql.pool.acquire() as conn:
-            total_usage = await conn.fetchval("SELECT SUM(used_total) FROM license_keys")
-            total_available = await conn.fetchval("SELECT SUM(total_limit - used_total) FROM license_keys WHERE used_total < total_limit")
+        # آخر 24 ساعة
+        last_24h = datetime.now() - timedelta(hours=24)
+        recent_analyses = [a for a in db_manager.analyses if a.timestamp > last_24h]
+        nightmare_analyses = [a for a in recent_analyses if a.analysis_type == "NIGHTMARE"]
         
-        stats_text = f"""{emoji('chart')} **إحصائيات سريعة - PostgreSQL**
+        # استخدام إجمالي
+        total_usage = sum(k.used_total for k in license_manager.license_keys.values())
+        
+        stats_text = f"""{emoji('chart')} **إحصائيات سريعة**
 
 {emoji('users')} **المستخدمين:**
-• الإجمالي: {stats['total_users']}
-• المفعلين: {stats['active_users']}
-• النسبة: {stats['activation_rate']}
+• الإجمالي: {total_users}
+• المفعلين: {active_users}
+• النسبة: {active_users/total_users*100:.1f}%
 
 {emoji('key')} **المفاتيح:**
-• الإجمالي: {keys_stats['total_keys']}
-• المستخدمة: {keys_stats['used_keys']}
-• المتاحة: {keys_stats['unused_keys']}
-• المنتهية: {keys_stats['expired_keys']}
+• الإجمالي: {total_keys}
+• المستخدمة: {used_keys}
+• المتاحة: {total_keys - used_keys}
 
-{emoji('progress')} **الاستخدام:**
-• الاستخدام الإجمالي: {total_usage or 0}
-• المتاح الإجمالي: {total_available or 0}
-• آخر 24 ساعة: {stats['recent_analyses']} تحليل
-
-{emoji('zap')} **النظام:**
-• قاعدة البيانات: PostgreSQL
-• الحفظ: دائم ومضمون
-• البيانات: لا تضيع عند التحديث
+{emoji('progress')} **آخر 24 ساعة:**
+• التحليلات: {len(recent_analyses)}
+• التحليلات الخاصة: {len(nightmare_analyses)}
+• الاستخدام الإجمالي: {total_usage}
 
 {emoji('clock')} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
@@ -1927,7 +1660,6 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
 • جميع أنواع التحليل (سريع، شامل، سكالب، سوينج)
 • التحليل الشامل المتقدم للمحترفين
 • دعم فني مباشر
-• {emoji('zap')} بياناتك محفوظة بشكل دائم
 
 {emoji('admin')} تواصل مع المطور: @Odai_xau""",
             reply_markup=InlineKeyboardMarkup([
@@ -1986,7 +1718,6 @@ async def handle_demo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
 {emoji('news')} تحليل تأثير الأخبار
 {emoji('refresh')} اكتشاف نقاط الانعكاس
 {emoji('fire')} التحليل الشامل المتقدم
-{emoji('zap')} حفظ دائم - لا تفقد بياناتك أبداً!
 
 {emoji('warning')} هذه كانت فرصتك الوحيدة للتجربة المجانية
 
@@ -2090,7 +1821,6 @@ async def handle_nightmare_analysis(update: Update, context: ContextTypes.DEFAUL
 {emoji('diamond')} **التحليل الشامل المتقدم - للمحترفين فقط**
 {emoji('zap')} **تحليل متقدم بالذكاء الاصطناعي Claude 4**
 {emoji('target')} **دقة التحليل: 95%+ - مضمون الجودة**
-{emoji('shield')} **البيانات محفوظة في PostgreSQL - آمنة 100%**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {emoji('warning')} **تنبيه هام:** هذا تحليل تعليمي متقدم وليس نصيحة استثمارية
@@ -2129,7 +1859,6 @@ async def handle_enhanced_price_display(update: Update, context: ContextTypes.DE
         # إنشاء رسالة السعر المتقدمة
         price_message = f"""╔══════════════════════════════════════╗
 ║       {emoji('gold')} **سعر الذهب المباشر** {emoji('gold')}       ║
-║        {emoji('zap')} PostgreSQL Live Data       ║
 ╚══════════════════════════════════════╝
 
 {emoji('diamond')} **السعر الحالي:** ${price.price:.2f}
@@ -2139,7 +1868,6 @@ async def handle_enhanced_price_display(update: Update, context: ContextTypes.DE
 {emoji('top')} **أعلى سعر:** ${price.high_24h:.2f}
 {emoji('bottom')} **أدنى سعر:** ${price.low_24h:.2f}
 {emoji('clock')} **التحديث:** {price.timestamp.strftime('%H:%M:%S')}
-{emoji('signal')} **المصدر:** {price.source}
 
 {emoji('info')} **للحصول على تحليل متقدم استخدم الأزرار أدناه**"""
         
@@ -2167,7 +1895,7 @@ async def handle_enhanced_price_display(update: Update, context: ContextTypes.DE
         await query.edit_message_text(f"{emoji('cross')} خطأ في جلب بيانات السعر")
 
 async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج معلومات المفتاح - نظام 50 سؤال مع PostgreSQL"""
+    """معالج معلومات المفتاح - نظام 50 سؤال"""
     query = update.callback_query
     user = context.user_data.get('user')
     
@@ -2184,7 +1912,6 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
         return
     
     try:
-        # الحصول على أحدث المعلومات من PostgreSQL
         key_info = await context.bot_data['license_manager'].get_key_info(user.license_key)
         if not key_info:
             await query.edit_message_text(f"{emoji('cross')} لا يمكن جلب معلومات المفتاح")
@@ -2195,7 +1922,6 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
         
         key_info_message = f"""╔══════════════════════════════════════╗
 ║        {emoji('key')} معلومات مفتاح التفعيل {emoji('key')}        ║
-║          {emoji('zap')} PostgreSQL Live Data         ║
 ╚══════════════════════════════════════╝
 
 {emoji('users')} المعرف: {key_info['username'] or 'غير محدد'}
@@ -2205,11 +1931,6 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
 {emoji('chart')} الاستخدام: {key_info['used_total']}/{key_info['total_limit']} أسئلة
 {emoji('up_arrow')} المتبقي: {key_info['remaining_total']} أسئلة
 {emoji('percentage')} نسبة الاستخدام: {usage_percentage:.1f}%
-
-{emoji('zap')} **مميزات PostgreSQL:**
-• البيانات محفوظة بشكل دائم
-• لا تضيع عند تحديث GitHub
-• استرداد فوري بعد إعادة التشغيل
 
 {emoji('diamond')} Gold Nightmare Academy - عضوية نشطة
 {emoji('rocket')} أنت جزء من مجتمع النخبة في تحليل الذهب!"""
@@ -2228,25 +1949,22 @@ async def handle_enhanced_key_info(update: Update, context: ContextTypes.DEFAULT
 
 # ==================== Admin Handler Functions ====================
 async def handle_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج إحصائيات الإدارة - مُحدث للـ PostgreSQL"""
+    """معالج إحصائيات الإدارة"""
     query = update.callback_query
     
     try:
         db_manager = context.bot_data['db']
         license_manager = context.bot_data['license_manager']
         
-        # الحصول على الإحصائيات من قاعدة البيانات
+        # الحصول على الإحصائيات
         db_stats = await db_manager.get_stats()
         keys_stats = await license_manager.get_all_keys_stats()
         
-        # إحصائيات متقدمة من PostgreSQL
-        async with db_manager.postgresql.pool.acquire() as conn:
-            total_usage = await conn.fetchval("SELECT SUM(used_total) FROM license_keys") or 0
-            total_available = await conn.fetchval("SELECT SUM(total_limit - used_total) FROM license_keys WHERE used_total < total_limit") or 0
-            avg_usage = await conn.fetchval("SELECT AVG(used_total) FROM license_keys WHERE user_id IS NOT NULL") or 0
+        # آخر 24 ساعة
+        last_24h = datetime.now() - timedelta(hours=24)
+        recent_analyses = [a for a in db_manager.analyses if a.timestamp > last_24h]
         
         stats_message = f"""{emoji('chart')} **إحصائيات شاملة للبوت**
-{emoji('zap')} **مصدر البيانات: PostgreSQL**
 
 {emoji('users')} **المستخدمين:**
 • إجمالي المستخدمين: {db_stats['total_users']}
@@ -2260,18 +1978,13 @@ async def handle_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE)
 • المفاتيح المنتهية: {keys_stats['expired_keys']}
 
 {emoji('chart')} **الاستخدام:**
-• الاستخدام الإجمالي: {total_usage}
-• المتاح الإجمالي: {total_available}
-• متوسط الاستخدام: {avg_usage:.1f}
+• الاستخدام الإجمالي: {keys_stats['total_usage']}
+• المتاح الإجمالي: {keys_stats['total_available']}
+• متوسط الاستخدام: {keys_stats['avg_usage_per_key']:.1f}
 
 {emoji('up_arrow')} **التحليلات:**
 • إجمالي التحليلات: {db_stats['total_analyses']}
-• تحليلات آخر 24 ساعة: {db_stats['recent_analyses']}
-
-{emoji('zap')} **النظام:**
-• قاعدة البيانات: PostgreSQL
-• حالة الاتصال: متصل ونشط
-• الحفظ: دائم ومضمون
+• تحليلات آخر 24 ساعة: {len(recent_analyses)}
 
 {emoji('clock')} آخر تحديث: {datetime.now().strftime('%H:%M:%S')}"""
         
@@ -2297,24 +2010,18 @@ async def handle_admin_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     await query.edit_message_text(
-        f"{emoji('key')} إدارة المفاتيح - PostgreSQL\n\n"
-        f"{emoji('zap')} جميع العمليات تتم على قاعدة البيانات مباشرة\n"
-        f"{emoji('shield')} البيانات محفوظة بشكل دائم\n\n"
-        "اختر العملية المطلوبة:",
+        f"{emoji('key')} إدارة المفاتيح\n\nاختر العملية المطلوبة:",
         reply_markup=create_keys_management_keyboard()
     )
 
 async def handle_keys_show_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض جميع المفاتيح من PostgreSQL"""
+    """عرض جميع المفاتيح"""
     query = update.callback_query
     license_manager = context.bot_data['license_manager']
     
-    # تحديث البيانات من قاعدة البيانات
-    await license_manager.load_keys_from_db()
-    
     if not license_manager.license_keys:
         await query.edit_message_text(
-            f"{emoji('cross')} لا توجد مفاتيح في قاعدة البيانات",
+            f"{emoji('cross')} لا توجد مفاتيح",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="admin_keys")]
             ])
@@ -2322,7 +2029,7 @@ async def handle_keys_show_all(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     # عرض أول 5 مفاتيح
-    message = f"{emoji('key')} أول 5 مفاتيح من PostgreSQL:\n\n"
+    message = f"{emoji('key')} أول 5 مفاتيح:\n\n"
     
     count = 0
     for key, license_key in license_manager.license_keys.items():
@@ -2338,9 +2045,7 @@ async def handle_keys_show_all(update: Update, context: ContextTypes.DEFAULT_TYP
         message += f"   {license_key.used_total}/{license_key.total_limit}\n\n"
     
     if len(license_manager.license_keys) > 5:
-        message += f"... و {len(license_manager.license_keys) - 5} مفاتيح أخرى\n\n"
-    
-    message += f"{emoji('zap')} جميع البيانات محفوظة في PostgreSQL"
+        message += f"... و {len(license_manager.license_keys) - 5} مفاتيح أخرى"
     
     await query.edit_message_text(
         message,
@@ -2350,26 +2055,23 @@ async def handle_keys_show_all(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def handle_keys_show_unused(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض المفاتيح المتاحة من PostgreSQL"""
+    """عرض المفاتيح المتاحة"""
     query = update.callback_query
     license_manager = context.bot_data['license_manager']
-    
-    # تحديث البيانات من قاعدة البيانات
-    await license_manager.load_keys_from_db()
     
     unused_keys = [key for key, license_key in license_manager.license_keys.items() 
                    if not license_key.user_id and license_key.is_active]
     
     if not unused_keys:
         await query.edit_message_text(
-            f"{emoji('cross')} لا توجد مفاتيح متاحة في PostgreSQL",
+            f"{emoji('cross')} لا توجد مفاتيح متاحة",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="admin_keys")]
             ])
         )
         return
     
-    message = f"{emoji('prohibited')} المفاتيح المتاحة ({len(unused_keys)}) من PostgreSQL:\n\n"
+    message = f"{emoji('prohibited')} المفاتيح المتاحة ({len(unused_keys)}):\n\n"
     
     for i, key in enumerate(unused_keys[:10], 1):  # أول 10
         license_key = license_manager.license_keys[key]
@@ -2377,9 +2079,7 @@ async def handle_keys_show_unused(update: Update, context: ContextTypes.DEFAULT_
         message += f"   {emoji('chart')} {license_key.total_limit} أسئلة\n\n"
     
     if len(unused_keys) > 10:
-        message += f"... و {len(unused_keys) - 10} مفاتيح أخرى\n\n"
-    
-    message += f"{emoji('zap')} محفوظة بشكل دائم في قاعدة البيانات"
+        message += f"... و {len(unused_keys) - 10} مفاتيح أخرى"
     
     await query.edit_message_text(
         message,
@@ -2393,7 +2093,7 @@ async def handle_keys_create_prompt(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     
     await query.edit_message_text(
-        f"""{emoji('key')} إنشاء مفاتيح جديدة في PostgreSQL
+        f"""{emoji('key')} إنشاء مفاتيح جديدة
 
 لإنشاء مفاتيح جديدة، استخدم الأمر:
 `/createkeys [العدد] [الحد_الإجمالي]`
@@ -2401,40 +2101,21 @@ async def handle_keys_create_prompt(update: Update, context: ContextTypes.DEFAUL
 مثال:
 `/createkeys 10 50`
 
-هذا سينشئ 10 مفاتيح، كل مفتاح يعطي 50 سؤال إجمالي
-
-{emoji('zap')} **مميزات PostgreSQL:**
-• المفاتيح تحفظ بشكل دائم
-• لا تضيع عند تحديث الكود
-• استرداد فوري بعد إعادة التشغيل
-• أمان عالي للبيانات""",
+هذا سينشئ 10 مفاتيح، كل مفتاح يعطي 50 سؤال إجمالي""",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="admin_keys")]
         ])
     )
 
 async def handle_keys_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إحصائيات المفاتيح من PostgreSQL"""
+    """إحصائيات المفاتيح"""
     query = update.callback_query
     license_manager = context.bot_data['license_manager']
     
     try:
-        # تحديث البيانات من قاعدة البيانات
         stats = await license_manager.get_all_keys_stats()
         
-        # إحصائيات إضافية من PostgreSQL
-        async with context.bot_data['db'].postgresql.pool.acquire() as conn:
-            avg_usage_active = await conn.fetchval(
-                "SELECT AVG(used_total) FROM license_keys WHERE user_id IS NOT NULL"
-            ) or 0
-            max_usage = await conn.fetchval(
-                "SELECT MAX(used_total) FROM license_keys"
-            ) or 0
-            min_usage = await conn.fetchval(
-                "SELECT MIN(used_total) FROM license_keys WHERE user_id IS NOT NULL"
-            ) or 0
-        
-        stats_message = f"""{emoji('chart')} إحصائيات المفاتيح - PostgreSQL
+        stats_message = f"""{emoji('chart')} إحصائيات المفاتيح
 
 {emoji('key')} **المفاتيح:**
 • الإجمالي: {stats['total_keys']}
@@ -2446,19 +2127,11 @@ async def handle_keys_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {emoji('chart')} **الاستخدام:**
 • الإجمالي: {stats['total_usage']}
 • المتاح: {stats['total_available']}
-• المتوسط العام: {stats['avg_usage_per_key']:.1f}
-• متوسط المستخدمة: {avg_usage_active:.1f}
-• أقصى استخدام: {max_usage}
-• أقل استخدام: {min_usage}
+• المتوسط: {stats['avg_usage_per_key']:.1f}
 
 {emoji('percentage')} **النسب:**
 • نسبة الاستخدام: {(stats['used_keys']/stats['total_keys']*100):.1f}%
-• نسبة المنتهية: {(stats['expired_keys']/stats['total_keys']*100):.1f}%
-
-{emoji('zap')} **النظام:**
-• قاعدة البيانات: PostgreSQL
-• البيانات: محفوظة بشكل دائم
-• التحديث: فوري ومباشر"""
+• نسبة المنتهية: {(stats['expired_keys']/stats['total_keys']*100):.1f}%"""
         
         await query.edit_message_text(
             stats_message,
@@ -2481,7 +2154,7 @@ async def handle_keys_delete_user(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     
     await query.edit_message_text(
-        f"""{emoji('cross')} حذف مستخدم من مفتاح - PostgreSQL
+        f"""{emoji('cross')} حذف مستخدم من مفتاح
 
 لحذف مستخدم وإعادة تعيين مفتاحه، استخدم:
 `/deleteuser GOLD-XXXX-XXXX-XXXX`
@@ -2489,12 +2162,7 @@ async def handle_keys_delete_user(update: Update, context: ContextTypes.DEFAULT_
 {emoji('warning')} تحذير:
 • سيتم حذف المستخدم من المفتاح
 • سيتم إعادة تعيين عداد الاستخدام إلى 0
-• المفتاح سيصبح متاحاً لمستخدم جديد
-
-{emoji('zap')} **مميزات PostgreSQL:**
-• التحديث يتم فوراً في قاعدة البيانات
-• لا يمكن فقدان التعديلات
-• العملية آمنة ومضمونة""",
+• المفتاح سيصبح متاحاً لمستخدم جديد""",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="admin_keys")]
         ])
@@ -2505,29 +2173,16 @@ async def handle_create_backup(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     
     await query.edit_message_text(
-        f"{emoji('backup')} جاري إنشاء النسخة الاحتياطية من PostgreSQL...",
+        f"{emoji('backup')} جاري إنشاء النسخة الاحتياطية...",
     )
     
     try:
         db_manager = context.bot_data['db']
         license_manager = context.bot_data['license_manager']
         
-        # تحديث البيانات من قاعدة البيانات
-        await license_manager.load_keys_from_db()
-        users_list = await db_manager.postgresql.get_all_users()
-        db_manager.users = {user.user_id: user for user in users_list}
-        
-        # الحصول على إحصائيات كاملة
-        stats = await db_manager.get_stats()
-        
         # إنشاء النسخة الاحتياطية
         backup_data = {
             'timestamp': datetime.now().isoformat(),
-            'database_type': 'PostgreSQL',
-            'backup_source': 'Live Database',
-            'users_count': len(db_manager.users),
-            'keys_count': len(license_manager.license_keys),
-            'total_analyses': stats['total_analyses'],
             'users': {str(k): {
                 'user_id': v.user_id,
                 'username': v.username,
@@ -2548,15 +2203,11 @@ async def handle_create_backup(update: Update, context: ContextTypes.DEFAULT_TYP
                 'is_active': v.is_active,
                 'notes': v.notes
             } for k, v in license_manager.license_keys.items()},
-            'system_info': {
-                'database_url': 'PostgreSQL (secured)',
-                'total_usage': sum(v.used_total for v in license_manager.license_keys.values()),
-                'available_questions': sum(v.total_limit - v.used_total for v in license_manager.license_keys.values() if v.used_total < v.total_limit)
-            }
+            'analyses_count': len(db_manager.analyses)
         }
         
         # حفظ في ملف
-        backup_filename = f"backup_postgresql_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         async with aiofiles.open(backup_filename, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(backup_data, ensure_ascii=False, indent=2))
         
@@ -2564,15 +2215,10 @@ async def handle_create_backup(update: Update, context: ContextTypes.DEFAULT_TYP
             f"""{emoji('check')} تم إنشاء النسخة الاحتياطية
 
 {emoji('folder')} الملف: {backup_filename}
-{emoji('zap')} المصدر: PostgreSQL Database
-{emoji('users')} المستخدمين: {backup_data['users_count']}
-{emoji('key')} المفاتيح: {backup_data['keys_count']}
-{emoji('up_arrow')} التحليلات: {backup_data['total_analyses']}
-{emoji('chart')} الاستخدام الإجمالي: {backup_data['system_info']['total_usage']}
-{emoji('clock')} الوقت: {datetime.now().strftime('%H:%M:%S')}
-
-{emoji('shield')} النسخة الاحتياطية تحتوي على جميع البيانات الدائمة
-{emoji('info')} يمكن استخدامها لاستعادة النظام في أي وقت""",
+{emoji('users')} المستخدمين: {len(backup_data['users'])}
+{emoji('key')} المفاتيح: {len(backup_data['license_keys'])}
+{emoji('up_arrow')} التحليلات: {backup_data['analyses_count']}
+{emoji('clock')} الوقت: {datetime.now().strftime('%H:%M:%S')}""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(f"{emoji('back')} رجوع للإدارة", callback_data="admin_panel")]
             ])
@@ -2651,7 +2297,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         await send_long_message(update, result)
         
-        # حفظ التحليل في PostgreSQL
+        # حفظ التحليل
         analysis = Analysis(
             id=f"{user.user_id}_{datetime.now().timestamp()}",
             user_id=user.user_id,
@@ -2663,7 +2309,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await context.bot_data['db'].add_analysis(analysis)
         
-        # تحديث إحصائيات المستخدم في PostgreSQL
+        # تحديث إحصائيات المستخدم
         user.total_requests += 1
         user.total_analyses += 1
         await context.bot_data['db'].add_user(user)
@@ -2674,7 +2320,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @require_activation_with_key_usage("image_analysis")
 async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور مع حفظ في PostgreSQL"""
+    """معالجة الصور"""
     user = context.user_data['user']
     
     # فحص الحد المسموح
@@ -2732,7 +2378,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await send_long_message(update, result)
         
-        # حفظ التحليل في PostgreSQL مع الصورة
+        # حفظ التحليل
         analysis = Analysis(
             id=f"{user.user_id}_{datetime.now().timestamp()}",
             user_id=user.user_id,
@@ -2741,11 +2387,11 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
             prompt=caption,
             result=result[:500],
             gold_price=price.price,
-            image_data=image_data[:1000]  # حفظ جزء من الصورة للمرجعية
+            image_data=image_data[:1000]
         )
         await context.bot_data['db'].add_analysis(analysis)
         
-        # تحديث إحصائيات المستخدم في PostgreSQL
+        # تحديث إحصائيات المستخدم
         user.total_requests += 1
         user.total_analyses += 1
         await context.bot_data['db'].add_user(user)
@@ -2756,7 +2402,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ==================== Callback Query Handler ====================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الأزرار مع تحديث PostgreSQL"""
+    """معالجة الأزرار"""
     query = update.callback_query
     await query.answer()
     
@@ -2768,7 +2414,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(f"{emoji('cross')} حسابك محظور.")
         return
     
-    # الحصول على بيانات المستخدم من PostgreSQL
+    # الحصول على بيانات المستخدم
     user = await context.bot_data['db'].get_user(user_id)
     if not user:
         user = User(
@@ -2790,11 +2436,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
 لاستخدام هذه الميزة، يجب إدخال مفتاح تفعيل صالح.
 استخدم: /license مفتاح_التفعيل
-
-{emoji('zap')} **مميزات النظام الجديد:**
-• بياناتك محفوظة في PostgreSQL
-• لا تضيع عند تحديث الكود
-• استرداد فوري بعد إعادة التشغيل
 
 {emoji('info')} للحصول على مفتاح تواصل مع:
 {emoji('admin')} Odai - @Odai_xau
@@ -2843,7 +2484,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             help_text = f"""{emoji('key')} كيفية الحصول على مفتاح التفعيل
 
 {emoji('diamond')} Gold Nightmare Bot يقدم تحليلات الذهب الأكثر دقة في العالم!
-{emoji('zap')} **إصدار PostgreSQL - بيانات دائمة ومحفوظة**
 
 {emoji('phone')} للحصول على مفتاح تفعيل:
 
@@ -2860,11 +2500,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 - {emoji('target')} نقاط دخول وخروج دقيقة
 - {emoji('shield')} إدارة مخاطر احترافية
 - {emoji('fire')} التحليل الشامل المتقدم
-- {emoji('zap')} بياناتك محفوظة بشكل دائم في PostgreSQL
 
 {emoji('gold')} سعر خاص ومحدود!
 {emoji('info')} المفتاح ينتهي بعد استنفاد 50 سؤال
-{emoji('shield')} لا تقلق - بياناتك لن تضيع أبداً!
 
 {emoji('star')} انضم لمجتمع النخبة الآن!"""
 
@@ -2883,9 +2521,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await handle_enhanced_key_info(update, context)
                         
         elif data == "back_main":
-            main_message = f"""{emoji('trophy')} Gold Nightmare Bot - PostgreSQL Edition
-
-{emoji('zap')} بياناتك محفوظة بشكل دائم ولن تضيع أبداً!
+            main_message = f"""{emoji('trophy')} Gold Nightmare Bot
 
 اختر الخدمة المطلوبة:"""
             
@@ -2942,7 +2578,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 
                 await processing_msg.edit_text(result)
                 
-                # حفظ التحليل في PostgreSQL
+                # حفظ التحليل
                 analysis = Analysis(
                     id=f"{user.user_id}_{datetime.now().timestamp()}",
                     user_id=user.user_id,
@@ -2962,10 +2598,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         
         elif data == "admin_panel" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
-                f"{emoji('admin')} لوحة الإدارة - PostgreSQL\n\n"
-                f"{emoji('zap')} جميع العمليات تتم على قاعدة البيانات مباشرة\n"
-                f"{emoji('shield')} البيانات محفوظة بشكل دائم\n\n"
-                "اختر العملية المطلوبة:",
+                f"{emoji('admin')} لوحة الإدارة\n\nاختر العملية المطلوبة:",
                 reply_markup=create_admin_keyboard()
             )
         
@@ -2994,7 +2627,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data == "create_backup" and user_id == Config.MASTER_USER_ID:
             await handle_create_backup(update, context)
         
-        # معالجات إدارية أخرى
+        # معالجات إدارية أخرى (يمكن تطويرها لاحقاً)
         elif data == "admin_users" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
                 f"{emoji('users')} إدارة المستخدمين\n\n{emoji('construction')} هذه الميزة قيد التطوير",
@@ -3029,9 +2662,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         
         elif data == "restart_bot" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
-                f"{emoji('refresh')} إعادة تشغيل البوت\n\n"
-                f"{emoji('zap')} مع PostgreSQL ستحتفظ جميع البيانات!\n"
-                f"{emoji('warning')} هذه العملية ستوقف البوت مؤقتاً",
+                f"{emoji('refresh')} إعادة تشغيل البوت\n\n{emoji('warning')} هذه العملية ستوقف البوت مؤقتاً",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(f"{emoji('check')} تأكيد إعادة التشغيل", callback_data="confirm_restart")],
                     [InlineKeyboardButton(f"{emoji('cross')} إلغاء", callback_data="admin_panel")]
@@ -3039,10 +2670,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
         
         elif data == "confirm_restart" and user_id == Config.MASTER_USER_ID:
-            await query.edit_message_text(
-                f"{emoji('refresh')} جاري إعادة تشغيل البوت...\n"
-                f"{emoji('zap')} البيانات محفوظة في PostgreSQL - لا تقلق!"
-            )
+            await query.edit_message_text(f"{emoji('refresh')} جاري إعادة تشغيل البوت...")
             # هنا يمكن إضافة منطق إعادة التشغيل الفعلي
             
         elif data == "settings":
@@ -3052,11 +2680,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     [InlineKeyboardButton(f"{emoji('back')} رجوع", callback_data="back_main")]
                 ])
             )
-        
-        # تحديث بيانات المستخدم في PostgreSQL
-        user.last_activity = datetime.now()
-        await context.bot_data['db'].add_user(user)
-        context.user_data['user'] = user
     
     except Exception as e:
         logger.error(f"Error in callback query handler: {e}")
@@ -3087,12 +2710,10 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"{emoji('cross')} تم إلغاء الرسالة الجماعية.")
             return
         
-        # جلب المستخدمين النشطين من PostgreSQL
         db_manager = context.bot_data['db']
-        users_list = await db_manager.postgresql.get_all_users()
-        active_users = [u for u in users_list if u.is_activated]
+        active_users = [u for u in db_manager.users.values() if u.is_activated]
         
-        status_msg = await update.message.reply_text(f"{emoji('envelope')} جاري الإرسال لـ {len(active_users)} مستخدم نشط...")
+        status_msg = await update.message.reply_text(f"{emoji('envelope')} جاري الإرسال لـ {len(active_users)} مستخدم...")
         
         success_count = 0
         failed_count = 0
@@ -3102,8 +2723,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
 {broadcast_text}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-{emoji('diamond')} Gold Nightmare Academy
-{emoji('zap')} PostgreSQL Edition - بيانات محفوظة بشكل دائم"""
+{emoji('diamond')} Gold Nightmare Academy"""
         
         for user in active_users:
             try:
@@ -3121,8 +2741,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             f"{emoji('check')} **اكتملت الرسالة الجماعية**\n\n"
             f"{emoji('envelope')} تم الإرسال لـ: {success_count} مستخدم\n"
             f"{emoji('cross')} فشل الإرسال لـ: {failed_count} مستخدم\n\n"
-            f"{emoji('chart')} معدل النجاح: {success_count/(success_count+failed_count)*100:.1f}%\n"
-            f"{emoji('zap')} البيانات محفوظة في PostgreSQL"
+            f"{emoji('chart')} معدل النجاح: {success_count/(success_count+failed_count)*100:.1f}%"
         )
         
         context.user_data.pop('admin_action', None)
@@ -3138,13 +2757,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             if update and hasattr(update, 'message') and update.message:
                 await update.message.reply_text(
                     f"{emoji('cross')} حدث خطأ في تنسيق الرسالة. تم إرسال النص بدون تنسيق.\n"
-                    f"{emoji('zap')} لا تقلق - بياناتك محفوظة في PostgreSQL!\n"
                     "استخدم /start للمتابعة."
                 )
         except:
             pass  # تجنب إرسال أخطاء إضافية
 
-# ==================== Main Function for Render Webhook with PostgreSQL ====================
+# ==================== Main Function for Render Webhook ====================
 async def setup_webhook():
     """إعداد webhook وحذف أي polling سابق"""
     try:
@@ -3161,7 +2779,7 @@ async def setup_webhook():
         print(f"{emoji('cross')} خطأ في إعداد Webhook: {e}")
 
 def main():
-    """الدالة الرئيسية لـ Render Webhook مع PostgreSQL"""
+    """الدالة الرئيسية لـ Render Webhook"""
     
     # التحقق من متغيرات البيئة
     if not Config.TELEGRAM_BOT_TOKEN:
@@ -3172,39 +2790,26 @@ def main():
         print(f"{emoji('cross')} خطأ: CLAUDE_API_KEY غير موجود")
         return
     
-    if not Config.DATABASE_URL:
-        print(f"{emoji('cross')} خطأ: DATABASE_URL غير موجود")
-        print("⚠️ تحتاج إضافة PostgreSQL في Render")
-        return
-    
-    print(f"{emoji('rocket')} تشغيل Gold Nightmare Bot مع PostgreSQL...")
+    print(f"{emoji('rocket')} تشغيل Gold Nightmare Bot على Render...")
+    print(f"{emoji('link')} إعداد Webhook للعمل على Render")
     
     # إنشاء التطبيق
     global application
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
     
-    # إنشاء المكونات المُحدثة مع PostgreSQL
+    # إنشاء المكونات
     cache_manager = CacheManager()
-    postgresql_manager = PostgreSQLManager()
-    db_manager = PersistentDatabaseManager(postgresql_manager)
-    license_manager = PersistentLicenseManager(postgresql_manager)
+    db_manager = DatabaseManager(Config.DB_PATH)
+    license_manager = LicenseManager(Config.KEYS_FILE)
     gold_price_manager = GoldPriceManager(cache_manager)
     claude_manager = ClaudeAIManager(cache_manager)
     rate_limiter = RateLimiter()
     security_manager = SecurityManager()
     
-    # تحميل البيانات من PostgreSQL
+    # تحميل البيانات
     async def initialize_data():
-        print(f"{emoji('zap')} تهيئة PostgreSQL...")
-        await postgresql_manager.initialize()
-        
-        print(f"{emoji('key')} تحميل مفاتيح التفعيل من PostgreSQL...")
+        await db_manager.load_data()
         await license_manager.initialize()
-        
-        print(f"{emoji('users')} تحميل المستخدمين من PostgreSQL...")
-        await db_manager.initialize()
-        
-        print(f"{emoji('check')} اكتمال التحميل من PostgreSQL!")
     
     # تشغيل تحميل البيانات
     asyncio.get_event_loop().run_until_complete(initialize_data())
@@ -3217,8 +2822,7 @@ def main():
         'claude_manager': claude_manager,
         'rate_limiter': rate_limiter,
         'security': security_manager,
-        'cache': cache_manager,
-        'postgresql': postgresql_manager
+        'cache': cache_manager
     })
     
     # إضافة المعالجات
@@ -3243,11 +2847,10 @@ def main():
     application.add_error_handler(error_handler)
     
     print(f"{emoji('check')} جاهز للعمل!")
-    print(f"{emoji('chart')} تم تحميل {len(license_manager.license_keys)} مفتاح تفعيل من PostgreSQL")
-    print(f"{emoji('users')} تم تحميل {len(db_manager.users)} مستخدم من PostgreSQL")
-    print(f"{emoji('zap')} جميع البيانات محفوظة بشكل دائم - لن تضيع أبداً!")
+    print(f"{emoji('chart')} تم تحميل {len(license_manager.license_keys)} مفتاح تفعيل")
+    print(f"{emoji('users')} تم تحميل {len(db_manager.users)} مستخدم")
     print("="*50)
-    print(f"{emoji('globe')} البوت يعمل على Render مع Webhook + PostgreSQL...")
+    print(f"{emoji('globe')} البوت يعمل على Render مع Webhook...")
     
     # إعداد webhook
     asyncio.get_event_loop().run_until_complete(setup_webhook())
@@ -3258,7 +2861,6 @@ def main():
     
     print(f"{emoji('link')} Webhook URL: {webhook_url}/webhook")
     print(f"{emoji('rocket')} استمع على المنفذ: {port}")
-    print(f"{emoji('shield')} PostgreSQL Database: متصل ونشط")
     
     try:
         application.run_webhook(
@@ -3274,43 +2876,34 @@ def main():
 
 if __name__ == "__main__":
     print(f"""
-╔══════════════════════════════════════════════════════════════════════╗
-║                    {emoji('fire')} Gold Nightmare Bot {emoji('fire')}                         ║
-║                 PostgreSQL + Render Webhook Edition                 ║
-║                  Version 6.1 Professional Enhanced                  ║
-║                      🔥 البيانات الدائمة 🔥                       ║
-╠══════════════════════════════════════════════════════════════════════╣
-║                                                                      ║
-║  {emoji('zap')} **المشكلة محلولة نهائياً!**                                    ║
-║  {emoji('shield')} جميع المفاتيح والمستخدمين محفوظين في PostgreSQL          ║
-║  {emoji('rocket')} لا تضيع البيانات عند تحديث GitHub                        ║  
-║  {emoji('globe')} تشغيل على Render مع Webhook                              ║
-║  {emoji('refresh')} استرداد فوري للبيانات بعد إعادة التشغيل                 ║
-║                                                                      ║
-║  {emoji('key')} **النظام الجديد:**                                           ║
-║  • مفاتيح محفوظة في قاعدة بيانات PostgreSQL                        ║
-║  • كل مفتاح يعطي 50 سؤال (ينتهي بعد الاستنفاد)                   ║
-║  • أزرار تفاعلية للمفعلين فقط                                      ║
-║  • لوحة إدارة شاملة ومتطورة                                        ║
-║  • تحليل شامل متقدم سري للمحترفين                                 ║
-║  • تنسيقات جميلة وتحليلات احترافية                                 ║
-║  • تحليل بـ 8000 توكن للدقة القصوى                                ║
-║                                                                      ║
-║  {emoji('admin')} **أوامر الإدارة:**                                         ║
-║  /stats - إحصائيات سريعة من PostgreSQL                         ║
-║  /backup - نسخة احتياطية شاملة                                  ║
-║  /keys - عرض كل المفاتيح من قاعدة البيانات                      ║
-║  /unusedkeys - المفاتيح المتاحة                                    ║
-║  /createkeys [عدد] [حد] - إنشاء مفاتيح جديدة                     ║
-║  /deleteuser [مفتاح] - حذف مستخدم وإعادة تعيين                   ║
-║                                                                      ║
-║  {emoji('fire')} **ضمانات النظام:**                                         ║
-║  ✅ البيانات لا تضيع أبداً                                        ║
-║  ✅ استمرار العمل بعد تحديث GitHub                               ║
-║  ✅ استرداد فوري لجميع المفاتيح والمستخدمين                      ║
-║  ✅ حفظ تلقائي لكل عملية في PostgreSQL                         ║
-║  ✅ مقاوم لأعطال الخادم وإعادة التشغيل                           ║
-║                                                                      ║
-╚══════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║                    {emoji('fire')} Gold Nightmare Bot {emoji('fire')}                    ║
+║                    Render Webhook Version                    ║
+║                     Version 6.0 Professional Enhanced        ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  {emoji('globe')} تشغيل على Render مع Webhook                             ║
+║  {emoji('zap')} لا يحتاج polling - webhook فقط                          ║
+║  {emoji('link')} متوافق مع بيئة Render                                   ║
+║  {emoji('signal')} استقبال فوري للرسائل                                    ║
+║                                                              ║
+║  {emoji('rocket')} المميزات:                                               ║
+║  • 40 مفتاح تفعيل أولي (50 سؤال/مفتاح)                     ║
+║  • نظام إنتهاء المفتاح بعد استنفاد الأسئلة                   ║
+║  • أزرار تفاعلية للمفعلين فقط                               ║
+║  • لوحة إدارة شاملة ومتطورة                                 ║
+║  • تحليل شامل متقدم سري للمحترفين                          ║
+║  • تنسيقات جميلة وتحليلات احترافية                          ║
+║  • تحليل بـ 8000 توكن للدقة القصوى                         ║
+║                                                              ║
+║  {emoji('admin')} أوامر الإدارة:                                          ║
+║  /stats - إحصائيات سريعة                                   ║
+║  /backup - نسخة احتياطية                                   ║
+║  /keys - عرض كل المفاتيح                                    ║
+║  /unusedkeys - المفاتيح المتاحة                              ║
+║  /createkeys [عدد] [حد] - إنشاء مفاتيح                      ║
+║  /deleteuser [مفتاح] - حذف مستخدم                          ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
 """)
     main()
