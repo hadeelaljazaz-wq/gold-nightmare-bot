@@ -2557,12 +2557,128 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
                 await query.edit_message_text(f"{emoji('cross')} خطأ في جلب الإحصائيات")
 
         elif data == "admin_show_keys" and user_id == Config.MASTER_USER_ID:
-            # استدعاء الأمر المُصلح لعرض المفاتيح
-            await show_fixed_keys_command(update, context)
+            # إصلاح عرض المفاتيح مباشرة في callback
+            await query.edit_message_text(f"جاري تحميل المفاتيح الثابتة...")
+            
+            try:
+                license_manager = context.bot_data['license_manager']
+                await license_manager.load_keys_from_db()
+                
+                if not license_manager.license_keys:
+                    await query.edit_message_text(f"لا توجد مفاتيح",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(f"رجوع", callback_data="admin_panel")]
+                        ])
+                    )
+                    return
+                
+                message = f"المفاتيح الثابتة الـ 40 - Ultra Simple:\n\n"
+                
+                # إحصائيات عامة
+                stats = await license_manager.get_all_keys_stats()
+                message += f"الإحصائيات:\n"
+                message += f"• إجمالي المفاتيح: {stats['total_keys']}\n"
+                message += f"• المفاتيح المستخدمة: {stats['used_keys']}\n"
+                message += f"• المفاتيح المتاحة: {stats['unused_keys']}\n"
+                message += f"• المفاتيح المنتهية: {stats['expired_keys']}\n"
+                message += f"محفوظة باتصال مباشر - مُصلح\n\n"
+                
+                # عرض أول 10 مفاتيح
+                count = 0
+                for key, key_data in license_manager.license_keys.items():
+                    if count >= 10:
+                        break
+                    count += 1
+                    
+                    status = "نشط" if key_data["active"] else "معطل"
+                    user_info = f"({key_data['username']})" if key_data['username'] else "(غير مستخدم)"
+                    usage = f"{key_data['used']}/{key_data['limit']}"
+                    
+                    message += f"{count:2d}. {key[:15]}...\n"
+                    message += f"   {status} | {user_info}\n"
+                    message += f"   الاستخدام: {usage}\n\n"
+                
+                if len(license_manager.license_keys) > 10:
+                    message += f"... و {len(license_manager.license_keys) - 10} مفاتيح أخرى\n\n"
+                
+                message += f"جميع المفاتيح ثابتة ومحفوظة بالاتصال المباشر"
+                
+                await query.edit_message_text(
+                    message,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"رجوع للإدارة", callback_data="admin_panel")]
+                    ])
+                )
+            
+            except Exception as e:
+                logger.error(f"Admin show keys error: {e}")
+                await query.edit_message_text(f"خطأ في تحميل المفاتيح: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"رجوع", callback_data="admin_panel")]
+                    ])
+                )
 
         elif data == "admin_unused_keys" and user_id == Config.MASTER_USER_ID:
-            # استدعاء الأمر المُصلح للمفاتيح المتاحة
-            await unused_fixed_keys_command(update, context)
+            # إصلاح عرض المفاتيح المتاحة مباشرة في callback
+            await query.edit_message_text(f"جاري تحميل المفاتيح المتاحة...")
+            
+            try:
+                license_manager = context.bot_data['license_manager']
+                await license_manager.load_keys_from_db()
+                
+                unused_keys = [key for key, key_data in license_manager.license_keys.items() 
+                               if not key_data["user_id"] and key_data["active"]]
+                
+                if not unused_keys:
+                    await query.edit_message_text(f"لا توجد مفاتيح متاحة من الـ 40",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(f"رجوع", callback_data="admin_panel")]
+                        ])
+                    )
+                    return
+                
+                message = f"المفاتيح المتاحة ({len(unused_keys)} من 40):\n"
+                message += f"محفوظة بالاتصال المباشر - مُصلح\n\n"
+                
+                for i, key in enumerate(unused_keys[:15], 1):  # أول 15 فقط
+                    key_data = license_manager.license_keys[key]
+                    message += f"{i:2d}. {key}\n"
+                    message += f"    الحد: {key_data['limit']} أسئلة + شارت\n\n"
+                
+                if len(unused_keys) > 15:
+                    message += f"... و {len(unused_keys) - 15} مفاتيح أخرى\n\n"
+                
+                message += f"""تعليمات إعطاء المفاتيح:
+انسخ مفتاح وأرسله للمستخدم مع التعليمات:
+
+```
+مفتاح التفعيل الخاص بك:
+[المفتاح]
+
+كيفية الاستخدام:
+/license [المفتاح]
+
+ملاحظات مهمة:
+• لديك 50 سؤال إجمالي
+• مفتاح ثابت - لا يُحذف أبداً
+• تحليل الشارت المتقدم مدعوم
+• بياناتك محفوظة بالاتصال المباشر
+```"""
+                
+                await query.edit_message_text(
+                    message,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"رجوع للإدارة", callback_data="admin_panel")]
+                    ])
+                )
+            
+            except Exception as e:
+                logger.error(f"Unused keys error: {e}")
+                await query.edit_message_text(f"خطأ في تحميل المفاتيح المتاحة: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton(f"رجوع", callback_data="admin_panel")]
+                    ])
+                )
 
         elif data == "admin_backup" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(f"{emoji('backup')} جاري إنشاء النسخة الاحتياطية...")
