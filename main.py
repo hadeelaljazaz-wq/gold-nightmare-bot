@@ -618,8 +618,8 @@ class UltraSimpleLicenseManager:
         
         return True, f"مفتاح صالح"
     
-    async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis") -> Tuple[bool, str]:
-        """استخدام المفتاح - مباشر"""
+    async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis", points_to_deduct: int = 1) -> Tuple[bool, str]:
+        """استخدام المفتاح مع إمكانية خصم نقاط متعددة - مباشر"""
         is_valid, message = await self.validate_key(key, user_id)
         
         if not is_valid:
@@ -627,13 +627,18 @@ class UltraSimpleLicenseManager:
         
         key_data = self.license_keys[key]
         
+        # فحص إذا كانت النقاط المتبقية كافية
+        if key_data["used"] + points_to_deduct > key_data["limit"]:
+            remaining = key_data["limit"] - key_data["used"]
+            return False, f"نقاط غير كافية للتحليل الشامل\nتحتاج {points_to_deduct} نقاط ولديك {remaining} فقط\nللحصول على مفتاح جديد: @Odai_xau"
+        
         # ربط المستخدم بالمفتاح إذا لم يكن مربوطاً
         if not key_data["user_id"]:
             key_data["user_id"] = user_id
             key_data["username"] = username
         
-        # زيادة عداد الاستخدام
-        key_data["used"] += 1
+        # خصم النقاط المطلوبة
+        key_data["used"] += points_to_deduct
         
         # حفظ التحديث - مباشر
         license_key = LicenseKey(
@@ -651,12 +656,22 @@ class UltraSimpleLicenseManager:
         
         remaining = key_data["limit"] - key_data["used"]
         
-        if remaining == 0:
-            return True, f"تم استخدام المفتاح بنجاح\nهذا آخر سؤال! انتهت صلاحية المفتاح\nللحصول على مفتاح جديد: @Odai_xau"
-        elif remaining <= 5:
-            return True, f"تم استخدام المفتاح بنجاح\nتبقى {remaining} أسئلة فقط!"
+        if points_to_deduct > 1:
+            # رسالة خاصة للتحليل الشامل
+            if remaining == 0:
+                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nانتهت صلاحية المفتاح!\nللحصول على مفتاح جديد: @Odai_xau"
+            elif remaining <= 5:
+                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nتبقى {remaining} نقاط فقط!"
+            else:
+                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nالنقاط المتبقية: {remaining} من {key_data['limit']}"
         else:
-            return True, f"تم استخدام المفتاح بنجاح\nالأسئلة المتبقية: {remaining} من {key_data['limit']}"
+            # رسالة عادية للتحليلات الأخرى
+            if remaining == 0:
+                return True, f"تم استخدام المفتاح بنجاح\nهذا آخر سؤال! انتهت صلاحية المفتاح\nللحصول على مفتاح جديد: @Odai_xau"
+            elif remaining <= 5:
+                return True, f"تم استخدام المفتاح بنجاح\nتبقى {remaining} أسئلة فقط!"
+            else:
+                return True, f"تم استخدام المفتاح بنجاح\nالأسئلة المتبقية: {remaining} من {key_data['limit']}"
     
     async def get_key_info(self, key: str) -> Optional[Dict]:
         """الحصول على معلومات المفتاح"""
@@ -2372,35 +2387,121 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
                 reply_markup=create_main_keyboard(user)
             )
         
-        elif data.startswith("analysis_") or data == "nightmare_analysis":
+        elif data.startswith("analysis_") or data == "nightmare_analysis" or data == "confirm_nightmare":
             # معالجة أنواع التحليل المختلفة
             if data == "nightmare_analysis":
+                # عرض تحذير التحليل الشامل المتقدم
+                key_info = await context.bot_data['license_manager'].get_key_info(user.license_key) if user.license_key else None
+                remaining_points = key_info['remaining_total'] if key_info else 0
+                
+                warning_message = f"""⚠️ **تحذير: التحليل الشامل المتقدم**
+
+🔥 هذا التحليل الأقوى والأشمل في البوت!
+
+💰 **التكلفة:** 5 نقاط (بدلاً من نقطة واحدة)
+📊 **النقاط المتبقية لديك:** {remaining_points}
+📊 **النقاط بعد التحليل:** {remaining_points - 5} (إذا تابعت)
+
+🎯 **ما ستحصل عليه مقابل 5 نقاط:**
+• تحليل شامل لجميع الأطر الزمنية (M5, M15, H1, H4, D1)
+• نقاط دخول وخروج بدقة السنت الواحد
+• مستويات دعم ومقاومة متعددة مع قوة كل مستوى  
+• سيناريوهات متعددة مع احتماليات دقيقة
+• استراتيجيات سكالبينج وسوينج
+• تحليل نقاط الانعكاس المحتملة
+• مناطق العرض والطلب المؤسسية
+• توقعات قصيرة ومتوسطة المدى
+• إدارة مخاطر تفصيلية
+• تنسيق احترافي بجداول منظمة
+
+⏰ **وقت التحليل:** 30-60 ثانية (تحليل معمق)
+
+هل تريد المتابعة وخصم 5 نقاط للحصول على التحليل الأقوى؟"""
+
+                if remaining_points < 5:
+                    warning_message += f"""
+
+❌ **تحذير:** نقاط غير كافية!
+تحتاج 5 نقاط ولديك {remaining_points} فقط.
+
+للحصول على مفتاح جديد تواصل مع: @Odai_xau"""
+                    
+                    await query.edit_message_text(
+                        warning_message,
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📞 تواصل مع Odai", url="https://t.me/Odai_xau")],
+                            [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_main")]
+                        ])
+                    )
+                    return
+                else:
+                    await query.edit_message_text(
+                        warning_message,
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔥 نعم، أريد التحليل الشامل (5 نقاط)", callback_data="confirm_nightmare")],
+                            [InlineKeyboardButton("🔙 لا، رجوع للقائمة", callback_data="back_main")]
+                        ])
+                    )
+                    return
+                    
+            elif data == "confirm_nightmare":
+                # تنفيذ التحليل الشامل بعد التأكيد
                 analysis_type = AnalysisType.NIGHTMARE
-                type_name = f"{emoji('fire')} التحليل الشامل المتقدم"
+                type_name = "🔥 التحليل الشامل المتقدم (5 نقاط)"
+                points_to_deduct = 5
             else:
                 analysis_type_map = {
-                    "analysis_quick": (AnalysisType.QUICK, f"{emoji('zap')} تحليل سريع"),
-                    "analysis_scalping": (AnalysisType.SCALPING, f"{emoji('target')} سكالبينج"),
-                    "analysis_detailed": (AnalysisType.DETAILED, f"{emoji('chart')} تحليل مفصل"),
-                    "analysis_swing": (AnalysisType.SWING, f"{emoji('up_arrow')} سوينج"),
-                    "analysis_forecast": (AnalysisType.FORECAST, f"{emoji('crystal_ball')} توقعات"),
-                    "analysis_reversal": (AnalysisType.REVERSAL, f"{emoji('refresh')} مناطق انعكاس"),
-                    "analysis_news": (AnalysisType.NEWS, f"{emoji('news')} تحليل الأخبار")
+                    "analysis_quick": (AnalysisType.QUICK, "⚡ تحليل سريع", 1),
+                    "analysis_scalping": (AnalysisType.SCALPING, "🎯 سكالبينج", 1),
+                    "analysis_detailed": (AnalysisType.DETAILED, "📊 تحليل مفصل", 1),
+                    "analysis_swing": (AnalysisType.SWING, "📈 سوينج", 1),
+                    "analysis_forecast": (AnalysisType.FORECAST, "🔮 توقعات", 1),
+                    "analysis_reversal": (AnalysisType.REVERSAL, "🔄 مناطق انعكاس", 1),
+                    "analysis_news": (AnalysisType.NEWS, "📰 تحليل الأخبار", 1)
                 }
                 
                 if data in analysis_type_map:
-                    analysis_type, type_name = analysis_type_map[data]
+                    analysis_type, type_name, points_to_deduct = analysis_type_map[data]
                 else:
                     return
             
-            processing_msg = await query.edit_message_text(
-                f"{emoji('brain')} جاري إعداد {type_name} المُحسن...\n\n{emoji('clock')} استجابة سريعة ومحسنة..."
-            )
+            # فحص واستخدام المفتاح مع النقاط المحددة
+            if user_id != Config.MASTER_USER_ID and user.license_key:
+                license_manager = context.bot_data['license_manager']
+                
+                processing_msg = await query.edit_message_text(
+                    f"⏰ جاري التحقق من المفتاح لـ {type_name}..."
+                )
+                
+                try:
+                    success, use_message = await license_manager.use_key(
+                        user.license_key, 
+                        user_id,
+                        user.username,
+                        f"callback_{data}",
+                        points_to_deduct=points_to_deduct
+                    )
+                    
+                    if not success:
+                        await processing_msg.edit_text(use_message)
+                        return
+                        
+                    # عرض رسالة نجح الخصم
+                    await processing_msg.edit_text(f"✅ {use_message}\n\n🧠 جاري إعداد {type_name}...")
+                    
+                except Exception as e:
+                    logger.error(f"Error using key: {e}")
+                    await processing_msg.edit_text("❌ خطأ في استخدام المفتاح")
+                    return
+            else:
+                processing_msg = await query.edit_message_text(
+                    f"🧠 جاري إعداد {type_name}...\n\n⏰ استجابة سريعة ومحسنة..."
+                )
             
             try:
                 price = await context.bot_data['gold_price_manager'].get_gold_price()
                 if not price:
-                    await processing_msg.edit_text(f"{emoji('cross')} لا يمكن الحصول على السعر حالياً.")
+                    await processing_msg.edit_text("❌ لا يمكن الحصول على السعر حالياً.")
                     return
                 
                 # إنشاء prompt مناسب لنوع التحليل
@@ -2443,22 +2544,23 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
                     user_settings=user.settings
                 )
                 
-                # إضافة توقيع مُصلح ومحسن
+                # إضافة توقيع خاص للتحليل الشامل المتقدم
                 if analysis_type == AnalysisType.NIGHTMARE:
                     enhanced_result = f"""{result}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{emoji('fire')} **تم بواسطة Gold Nightmare Academy** {emoji('fire')}
-{emoji('diamond')} **التحليل الشامل المتقدم - Fixed & Enhanced**
-{emoji('zap')} **تحليل متقدم بالذكاء الاصطناعي Claude 4 المُحسن**
-{emoji('target')} **دقة التحليل: 95%+ - نقاط بالسنت الواحد**
-{emoji('camera')} **تحليل الشارت المتقدم متاح - أرسل صورة!**
-{emoji('shield')} **40 مفتاح ثابت فقط - لا يُحذف أبداً**
-{emoji('key')} **النظام مُصلح ومحسن - استجابة سريعة**
+🔥 **تم بواسطة Gold Nightmare Academy** 🔥
+💎 **التحليل الشامل المتقدم - Premium (5 نقاط)**
+⚡ **تحليل متقدم بالذكاء الاصطناعي Claude المحسن**
+🎯 **دقة التحليل: 95%+ - نقاط بالسنت الواحد**
+📸 **تحليل الشارت المتقدم متاح - أرسل صورة!**
+🛡️ **40 مفتاح ثابت فقط - لا يُحذف أبداً**
+🔑 **النظام مُصلح - اتصال مباشر فقط**
+💰 **تكلفة هذا التحليل: 5 نقاط (يستحق كل نقطة)**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-{emoji('warning')} **تنبيه هام:** هذا تحليل تعليمي متقدم وليس نصيحة استثمارية
-{emoji('info')} **استخدم إدارة المخاطر دائماً ولا تستثمر أكثر مما تستطيع خسارته**"""
+⚠️ **تنبيه هام:** هذا تحليل تعليمي متقدم وليس نصيحة استثمارية
+💡 **استخدم إدارة المخاطر دائماً ولا تستثمر أكثر مما تستطيع خسارته**"""
                     result = enhanced_result
                 
                 await processing_msg.edit_text(result)
@@ -2476,14 +2578,15 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
                 await context.bot_data['db'].add_analysis(analysis)
                 
                 # إضافة زر رجوع
-                keyboard = [[InlineKeyboardButton(f"{emoji('back')} رجوع للقائمة", callback_data="back_main")]]
+                keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_main")]]
                 await query.edit_message_reply_markup(
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             
             except Exception as e:
                 logger.error(f"Analysis error: {e}")
-                await processing_msg.edit_text(f"{emoji('cross')} حدث خطأ في {type_name}")
+                await processing_msg.edit_text(f"❌ حدث خطأ في {type_name}")
+        
         
         elif data == "admin_panel" and user_id == Config.MASTER_USER_ID:
             await query.edit_message_text(
