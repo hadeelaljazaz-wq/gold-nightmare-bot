@@ -4,8 +4,14 @@ MASTER_USER_ID=your_telegram_user_id_here
 
 # Claude AI Configuration
 CLAUDE_API_KEY=your_anthropic_api_key_here
-CLAUDE_MODEL=claude-opus-4-1-20250805
+CLAUDE_MODEL=claude-sonnet-4-20250514
 CLAUDE_TEMPERATURE=0.3
+MAX_TOKENS=4000
+CLAUDE_TIMEOUT=120000
+
+# Optional for heavy analysis
+HEAVY_ANALYSIS_TIMEOUT=300000
+ANALYSIS_MAX_TOKENS=8000
 
 # Gold API Configuration
 GOLD_API_TOKEN=your_gold_api_token_here
