@@ -1383,56 +1383,54 @@ def clean_markdown_text(text: str) -> str:
     return text
 
 async def send_long_message_fixed(update: Update, text: str, parse_mode: str = None, reply_markup=None):
-    """إرسال رسائل طويلة - مُصلح"""
-    max_length = 4000
+    """إرسال رسائل طويلة - محسنة بدون تأثير على المحتوى"""
+    MAX_LENGTH = 4000
     
+    # تنظيف خفيف للنص
     if parse_mode == ParseMode.MARKDOWN:
         text = clean_markdown_text(text)
         parse_mode = None
     
-    if len(text) <= max_length:
+    if len(text) <= MAX_LENGTH:
         try:
             await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"Telegram send error: {e}")
-            clean_text = clean_markdown_text(text)
-            try:
-                await update.message.reply_text(clean_text, reply_markup=reply_markup)
-            except:
-                await update.message.reply_text(f"{emoji('cross')} حدث خطأ في الإرسال")
-        return
+            return
+        except Exception:
+            # تنظيف إضافي فقط عند الخطأ
+            clean_text = text.replace('*', '').replace('_', '')
+            await update.message.reply_text(clean_text, reply_markup=reply_markup)
+            return
     
-    # تقسيم الرسالة
+    # تقسيم ذكي للنص الطويل
     parts = []
+    paragraphs = text.split('\n\n')  # تقسيم حسب الفقرات
     current_part = ""
     
-    for line in text.split('\n'):
-        if len(current_part) + len(line) + 1 > max_length:
-            if current_part:
-                parts.append(current_part)
-                current_part = line
-            else:
-                parts.append(line[:max_length])
+    for paragraph in paragraphs:
+        if len(current_part) + len(paragraph) + 2 <= MAX_LENGTH:
+            current_part += paragraph + '\n\n'
         else:
-            current_part += '\n' + line if current_part else line
+            if current_part:
+                parts.append(current_part.strip())
+            current_part = paragraph + '\n\n'
     
     if current_part:
-        parts.append(current_part)
+        parts.append(current_part.strip())
     
     # إرسال الأجزاء
     for i, part in enumerate(parts):
         try:
-            part_markup = reply_markup if i == len(parts) - 1 else None
-            await update.message.reply_text(
-                part + (f"\n\n{emoji('refresh')} الجزء {i+1}/{len(parts)}" if len(parts) > 1 else ""),
-                parse_mode=parse_mode,
-                reply_markup=part_markup
-            )
+            markup = reply_markup if i == len(parts) - 1 else None
+            header = f"📄 الجزء {i+1}/{len(parts)}\n\n" if len(parts) > 1 and i > 0 else ""
+            await update.message.reply_text(header + part, reply_markup=markup)
+            
+            if i < len(parts) - 1:
+                await asyncio.sleep(0.5)  # توقف قصير
+                
         except Exception as e:
-            logger.error(f"Error sending part {i+1}: {e}")
-        
-        if i < len(parts) - 1:
-            await asyncio.sleep(0.3)
+            # نسخة احتياطية مبسطة
+            simple_part = part.replace('```', '').replace('**', '').replace('*', '')
+            await update.message.reply_text(f"الجزء {i+1} (مبسط):\n{simple_part}", reply_markup=markup)
 
 def create_main_keyboard(user: User) -> InlineKeyboardMarkup:
     """إنشاء لوحة المفاتيح الرئيسية - مُصلح"""
@@ -2563,7 +2561,9 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
 💡 **استخدم إدارة المخاطر دائماً ولا تستثمر أكثر مما تستطيع خسارته**"""
                     result = enhanced_result
                 
-                await processing_msg.edit_text(result)
+# حذف رسالة "جاري التحليل" وإرسال النتيجة
+                await processing_msg.delete()
+                await query.message.reply_text(result)
                 
                 # حفظ التحليل
                 analysis = Analysis(
@@ -2577,9 +2577,10 @@ async def handle_callback_query_fixed(update: Update, context: ContextTypes.DEFA
                 )
                 await context.bot_data['db'].add_analysis(analysis)
                 
-                # إضافة زر رجوع
+                # إضافة زر رجوع في رسالة منفصلة
                 keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_main")]]
-                await query.edit_message_reply_markup(
+                await query.message.reply_text(
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             
