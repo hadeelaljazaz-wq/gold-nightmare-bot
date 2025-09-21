@@ -974,19 +974,16 @@ class EnhancedDBManager:
         except Exception as e:
             logger.error(f"Error getting user {user_id}: {e}")
             return None
-                        is_active=row['is_active'],
-                        user_id=row['user_id'],
-                        username=row['username'],
-                        notes=row['notes'] or ''
-                    )
-                return keys
-            finally:
-                await conn.close()
-        except Exception as e:
+
+# ==================== Enhanced Cache Manager ====================
             logger.error(f"Error getting all license keys: {e}")
             return {}
     
     async def save_analysis(self, analysis: Analysis):
+        """حفظ التحليل - محسن"""
+        self.analyses.append(analysis)
+        logger.debug(f"Analysis saved for user {analysis.user_id}")
+
 # ==================== Enhanced Cache Manager ====================
 class EnhancedCacheManager:
     """مدير التخزين المؤقت المحسن"""
@@ -1394,111 +1391,16 @@ class EnhancedClaudeAIManager:
 
 {emoji('phone')} **إذا استمر الخطأ، تواصل مع الدعم الفني**
 """
-            db_keys = await self.database.get_all_license_keys()
-            for key, license_key in db_keys.items():
-                self.license_keys[key] = {
-                    "limit": license_key.total_limit,
-                    "used": license_key.used_total,
-                    "active": license_key.is_active,
-                    "user_id": license_key.user_id,
-                    "username": license_key.username
-                }
-            print(f"تم تحميل {len(self.license_keys)} مفتاح - مباشر")
-        except Exception as e:
-            print(f"خطأ في تحميل المفاتيح: {e}")
-            self.license_keys = {}
+
+# ==================== Enhanced Gold Price Manager ====================
+class EnhancedGoldPriceManager:
+    """مدير أسعار الذهب المحسن"""
     
-    async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
-        """فحص صحة المفتاح"""
-        if key not in self.license_keys:
-            return False, f"مفتاح التفعيل غير صالح"
-        
-        key_data = self.license_keys[key]
-        
-        if not key_data["active"]:
-            return False, f"مفتاح التفعيل معطل"
-        
-        if key_data["user_id"] and key_data["user_id"] != user_id:
-            return False, f"مفتاح التفعيل مستخدم من قبل مستخدم آخر"
-        
-        if key_data["used"] >= key_data["limit"]:
-            return False, f"انتهت صلاحية المفتاح\nتم استنفاد الـ {key_data['limit']} أسئلة\nللحصول على مفتاح جديد: @Odai_xau"
-        
-        return True, f"مفتاح صالح"
-    
-    async def use_key(self, key: str, user_id: int, username: str = None, request_type: str = "analysis", points_to_deduct: int = 1) -> Tuple[bool, str]:
-        """استخدام المفتاح مع إمكانية خصم نقاط متعددة - مباشر"""
-        is_valid, message = await self.validate_key(key, user_id)
-        
-        if not is_valid:
-            return False, message
-        
-        key_data = self.license_keys[key]
-        
-        # فحص إذا كانت النقاط المتبقية كافية
-        if key_data["used"] + points_to_deduct > key_data["limit"]:
-            remaining = key_data["limit"] - key_data["used"]
-            return False, f"نقاط غير كافية للتحليل الشامل\nتحتاج {points_to_deduct} نقاط ولديك {remaining} فقط\nللحصول على مفتاح جديد: @Odai_xau"
-        
-        # ربط المستخدم بالمفتاح إذا لم يكن مربوطاً
-        if not key_data["user_id"]:
-            key_data["user_id"] = user_id
-            key_data["username"] = username
-        
-        # خصم النقاط المطلوبة
-        key_data["used"] += points_to_deduct
-        
-        # حفظ التحديث - مباشر
-        license_key = LicenseKey(
-            key=key,
-            created_date=datetime.now(),
-            total_limit=key_data["limit"],
-            used_total=key_data["used"],
-            is_active=key_data["active"],
-            user_id=key_data["user_id"],
-            username=key_data["username"],
-            notes="مفتاح ثابت مُحدث"
-        )
-        
-        await self.database.save_license_key(license_key)
-        
-        remaining = key_data["limit"] - key_data["used"]
-        
-        if points_to_deduct > 1:
-            # رسالة خاصة للتحليل الشامل
-            if remaining == 0:
-                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nانتهت صلاحية المفتاح!\nللحصول على مفتاح جديد: @Odai_xau"
-            elif remaining <= 5:
-                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nتبقى {remaining} نقاط فقط!"
-            else:
-                return True, f"تم خصم {points_to_deduct} نقاط للتحليل الشامل المتقدم\nالنقاط المتبقية: {remaining} من {key_data['limit']}"
-        else:
-            # رسالة عادية للتحليلات الأخرى
-            if remaining == 0:
-                return True, f"تم استخدام المفتاح بنجاح\nهذا آخر سؤال! انتهت صلاحية المفتاح\nللحصول على مفتاح جديد: @Odai_xau"
-            elif remaining <= 5:
-                return True, f"تم استخدام المفتاح بنجاح\nتبقى {remaining} أسئلة فقط!"
-            else:
-                return True, f"تم استخدام المفتاح بنجاح\nالأسئلة المتبقية: {remaining} من {key_data['limit']}"
-    
-    async def get_key_info(self, key: str) -> Optional[Dict]:
-        """الحصول على معلومات المفتاح"""
-        if key not in self.license_keys:
-            return None
-        
-        key_data = self.license_keys[key]
-        
-        return {
-            'key': key,
-            'is_active': key_data["active"],
-            'total_limit': key_data["limit"],
-            'used_total': key_data["used"],
-            'remaining_total': key_data["limit"] - key_data["used"],
-            'user_id': key_data["user_id"],
-            'username': key_data["username"],
-            'created_date': '2024-08-25',
-            'notes': 'مفتاح ثابت دائم'
-        }
+    def __init__(self, cache_manager: EnhancedCacheManager):
+        self.cache = cache_manager
+        self.api_token = Config.GOLD_API_TOKEN
+        self.api_url = Config.GOLD_API_URL
+        self.session = None
     
     async def get_all_keys_stats(self) -> Dict:
         """إحصائيات جميع المفاتيح"""
