@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Gold Nightmare Bot - Enhanced with Direct Database Connections & Improved Performance
-بوت تحليل الذهب الاحترافي - مُحسن مع اتصال مباشر لقاعدة البيانات وأداء محسن
-Version: 8.0 Professional Enhanced Edition
-Author: Adi - Gold Nightmare School
+Gold Nightmare Bot - Fixed & Enhanced with Permanent License System
+بوت تحليل الذهب الاحترافي - مُحسن ومُصلح مع نظام المفاتيح الثابت
+Version: 7.0 Professional Fixed
+Author: odai - Gold Nightmare School
 """
 
 import logging
-import logging.handlers
 import asyncio
 import base64
 import io
@@ -29,7 +28,6 @@ import pickle
 import aiofiles
 import asyncpg
 from urllib.parse import urlparse
-from flask import Flask
 
 # Telegram imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -57,17 +55,16 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
-# ==================== Enhanced Performance Configuration ====================
+# ==================== Fixed Performance Configuration ====================
 class PerformanceConfig:
-    # تحسينات الأداء المحسنة - اتصال مباشر بدون pool
-    CLAUDE_TIMEOUT = 180  # timeout محسن للاستجابة السريعة
-    DATABASE_TIMEOUT = 5   # timeout مباشر للاتصالات
-    HTTP_TIMEOUT = 10      # timeout HTTP محسن
-    CACHE_TTL = 300        # 5 دقائق cache للسرعة
-    MAX_RETRIES = 3        # محاولات إعادة محسنة
-    TELEGRAM_TIMEOUT = 10   # timeout تيليجرام محسن
-    CONNECTION_RETRIES = 3  # محاولات الاتصال المباشر
-    CONNECTION_DELAY = 1    # تأخير بين المحاولات
+    # تحسينات الأداء المُصلحة
+    CLAUDE_TIMEOUT = 180  # تقليل timeout
+    DATABASE_TIMEOUT = 5   # تقليل database timeout
+    HTTP_TIMEOUT = 10      # timeout HTTP
+    CACHE_TTL = 300        # 5 دقائق cache
+    MAX_RETRIES = 2        # محاولات إعادة
+    CONNECTION_POOL_SIZE = 3  # تقليل pool size
+    TELEGRAM_TIMEOUT = 5   # timeout تيليجرام
 
 # ==================== Pre-generated License Keys (Fixed Static 40 Keys) ====================
 PERMANENT_LICENSE_KEYS = {
@@ -145,185 +142,70 @@ EMOJIS = {
     'up': '⬆️', 'down': '⬇️', 'plus': '➕'
 }
 
-# ==================== Enhanced Configuration ====================
+def emoji(name): return EMOJIS.get(name, '')
+
+# ==================== Configuration ====================
 class Config:
     # Telegram Configuration
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     MASTER_USER_ID = int(os.getenv("MASTER_USER_ID", "590918137"))
     
-    # Claude Configuration - Enhanced
+    # Claude Configuration
     CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-    CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022") 
-    CLAUDE_MAX_TOKENS = 8000  # زيادة الـ tokens للتحليل المتقدم
+    CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514") 
+    CLAUDE_MAX_TOKENS = 8000
     CLAUDE_TEMPERATURE = float(os.getenv("CLAUDE_TEMPERATURE", "0.3"))
     
     # Gold API Configuration
     GOLD_API_TOKEN = os.getenv("GOLD_API_TOKEN")
     GOLD_API_URL = "https://www.goldapi.io/api/XAU/USD"
     
-    # Enhanced Rate Limiting
+    # Rate Limiting
     RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
     RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
     
-    # Enhanced Cache Configuration
+    # Cache Configuration
     PRICE_CACHE_TTL = int(os.getenv("PRICE_CACHE_TTL", "60"))
     ANALYSIS_CACHE_TTL = int(os.getenv("ANALYSIS_CACHE_TTL", "300"))
     
-    # Enhanced Image Processing
+    # Image Processing
     MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))
     MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "1568"))
     IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))
-    CHART_ANALYSIS_ENABLED = True  # تفعيل تحليل الشارت المحسن
+    CHART_ANALYSIS_ENABLED = True
     
-    # Direct Database Configuration - No Pools
+    # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
-    DB_PATH = os.getenv("DB_PATH", "gold_bot_data.db")  # Fallback للملفات المحلية
-    KEYS_FILE = os.getenv("KEYS_FILE", "license_keys.json")
     
     # Timezone
     TIMEZONE = pytz.timezone(os.getenv("TIMEZONE", "Asia/Amman"))
     
-    # Enhanced Secret Analysis Trigger
+    # Secret Analysis Trigger
     NIGHTMARE_TRIGGER = "كابوس الذهب"
 
-# ==================== Enhanced Logging Setup ====================
+# ==================== Logging Setup ====================
 def setup_logging():
-    """Configure enhanced logging with performance monitoring"""
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     
-    # Remove existing handlers
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
     
-    # Console handler with enhanced formatting
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     
-    # File handler with rotation for better performance monitoring
-    os.makedirs('logs', exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
-        'logs/gold_bot_enhanced.log',
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=10,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.DEBUG)
-    
-    # Enhanced formatters
-    detailed_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
     simple_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%H:%M:%S'
     )
     
     console_handler.setFormatter(simple_formatter)
-    file_handler.setFormatter(detailed_formatter)
-    
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
     
     return logger
 
 logger = setup_logging()
-
-# Enhanced Emojis for better UI
-EMOJIS = {
-    'fire': '🔥', 'check': '✅', 'cross': '❌', 'warning': '⚠️',
-    'money': '💰', 'chart': '📊', 'gold': '🪙', 'robot': '🤖',
-    'key': '🔑', 'lock': '🔒', 'unlock': '🔓', 'user': '👤',
-    'users': '👥', 'clock': '⏰', 'calendar': '📅', 'star': '⭐',
-    'diamond': '💎', 'gem': '💍', 'crown': '👑', 'trophy': '🏆',
-    'rocket': '🚀', 'zap': '⚡', 'boom': '💥', 'sparkles': '✨',
-    'eyes': '👀', 'brain': '🧠', 'muscle': '💪', 'heart': '❤️',
-    'shield': '🛡️', 'sword': '⚔️', 'bow': '🏹', 'target': '🎯',
-    'bullseye': '🎯', 'dart': '🎯', 'flag': '🚩', 'bell': '🔔',
-    'loud': '🔊', 'mute': '🔇', 'speaker': '🔈', 'mega': '📣',
-    'mail': '📧', 'inbox': '📥', 'outbox': '📤', 'package': '📦',
-    'gift': '🎁', 'balloon': '🎈', 'party': '🎉', 'confetti': '🎊',
-    'camera': '📸', 'video': '📹', 'film': '🎬', 'tv': '📺',
-    'phone': '📱', 'computer': '💻', 'laptop': '💻', 'desktop': '🖥️',
-    'printer': '🖨️', 'keyboard': '⌨️', 'mouse': '🖱️', 'trackball': '🖲️',
-    'cd': '💿', 'dvd': '📀', 'floppy': '💾', 'card': '💳',
-    'credit': '💳', 'money_bag': '💰', 'dollar': '💵', 'euro': '💶',
-    'pound': '💷', 'yen': '💴', 'franc': '💸', 'bank': '🏦',
-    'atm': '🏧', 'chart_up': '📈', 'chart_down': '📉', 'bar_chart': '📊',
-    'calendar': '📅', 'date': '📆', 'spiral': '🗓️', 'card_index': '📇',
-    'file': '📄', 'page': '📃', 'news': '📰', 'book': '📖',
-    'notebook': '📓', 'ledger': '📒', 'books': '📚', 'library': '📚',
-    'mag': '🔍', 'mag_right': '🔎', 'scissors': '✂️', 'pushpin': '📌',
-    'round_pushpin': '📍', 'triangular_flag': '🚩', 'waving_flag': '🏳️',
-    'crossed_flags': '🎌', 'black_flag': '🏴', 'white_flag': '🏳️',
-    'rainbow_flag': '🏳️‍🌈', 'transgender_flag': '🏳️‍⚧️', 'pirate_flag': '🏴‍☠️',
-    'stop': '🛑', 'play': '▶️', 'pause': '⏸️', 'prohibited': '⭕',
-    'red_dot': '🔴', 'green_dot': '🟢', 'top': '🔝', 'bottom': '🔻',
-    'up': '⬆️', 'down': '⬇️', 'plus': '➕', 'minus': '➖'
-}
-
-# ==================== Enhanced Data Models ====================
-@dataclass
-class User:
-    user_id: int
-    username: Optional[str]
-    first_name: str
-    is_activated: bool = False
-    activation_date: Optional[datetime] = None
-    last_activity: datetime = field(default_factory=datetime.now)
-    total_requests: int = 0
-    total_analyses: int = 0
-    subscription_tier: str = 'basic'
-    settings: Dict[str, Any] = field(default_factory=dict)
-    license_key: Optional[str] = None
-    daily_requests_used: int = 0
-    last_request_date: Optional[date] = None
-
-@dataclass
-class GoldPrice:
-    price: float
-    timestamp: datetime
-    change_24h: float = 0.0
-    change_percent: float = 0.0
-    high_24h: float = 0.0
-    low_24h: float = 0.0
-    market_status: str = "unknown"
-    
-@dataclass
-class Analysis:
-    id: str
-    user_id: int
-    timestamp: datetime
-    analysis_type: str
-    prompt: str
-    result: str
-    gold_price: float
-    image_data: Optional[bytes] = None
-    performance_metrics: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
-class LicenseKey:
-    key: str
-    created_date: datetime
-    total_limit: int = 50
-    used_total: int = 0
-    is_active: bool = True
-    user_id: Optional[int] = None
-    username: Optional[str] = None
-    notes: str = ""
-
-class AnalysisType(Enum):
-    QUICK = "QUICK"
-    SCALPING = "SCALPING"  
-    DETAILED = "DETAILED"
-    CHART = "CHART"
-    NEWS = "NEWS"
-    FORECAST = "FORECAST"
-    SWING = "SWING"
-    REVERSAL = "REVERSAL"
-    NIGHTMARE = "NIGHTMARE"
 
 # ==================== Data Models ====================
 @dataclass
@@ -386,33 +268,19 @@ class AnalysisType(Enum):
     REVERSAL = "REVERSAL"
     NIGHTMARE = "NIGHTMARE"
 
-# ==================== ENHANCED Direct Database Manager - No Connection Pools ====================
-class EnhancedDirectDatabaseManager:
-    """مدير قاعدة البيانات المحسن - اتصال مباشر بدون pools"""
-    
+# ==================== ULTRA SIMPLE Database Manager - No Pool Issues ====================
+class UltraSimpleDatabaseManager:
     def __init__(self):
         self.database_url = Config.DATABASE_URL
-        self.connection_retries = PerformanceConfig.CONNECTION_RETRIES
-        self.connection_delay = PerformanceConfig.CONNECTION_DELAY
-        self.timeout = PerformanceConfig.DATABASE_TIMEOUT
+        self.connection_retries = 3
+        self.connection_delay = 1
     
-    async def get_direct_connection(self):
-        """الحصول على اتصال مباشر محسن - بدون pool"""
+    async def get_connection(self):
+        """الحصول على اتصال مباشر - بدون pool"""
         for attempt in range(self.connection_retries):
             try:
-                # اتصال مباشر مع timeout محسن
-                conn = await asyncio.wait_for(
-                    asyncpg.connect(self.database_url), 
-                    timeout=self.timeout
-                )
-                logger.debug(f"Direct database connection established (attempt {attempt + 1})")
+                conn = await asyncpg.connect(self.database_url)
                 return conn
-            except asyncio.TimeoutError:
-                logger.warning(f"Database connection timeout on attempt {attempt + 1}")
-                if attempt < self.connection_retries - 1:
-                    await asyncio.sleep(self.connection_delay)
-                else:
-                    raise ConnectionError("Database connection timeout after all retries")
             except Exception as e:
                 logger.warning(f"Database connection attempt {attempt + 1} failed: {e}")
                 if attempt < self.connection_retries - 1:
@@ -420,56 +288,22 @@ class EnhancedDirectDatabaseManager:
                 else:
                     raise
     
-    async def execute_with_retry(self, query: str, *args, fetch_method: str = None):
-        """تنفيذ استعلام مع إعادة المحاولة والإغلاق المباشر"""
-        for attempt in range(self.connection_retries):
-            conn = None
-            try:
-                conn = await self.get_direct_connection()
-                
-                if fetch_method == "fetch":
-                    result = await conn.fetch(query, *args)
-                elif fetch_method == "fetchrow":
-                    result = await conn.fetchrow(query, *args)
-                elif fetch_method == "fetchval":
-                    result = await conn.fetchval(query, *args)
-                else:
-                    result = await conn.execute(query, *args)
-                
-                logger.debug(f"Query executed successfully: {query[:50]}...")
-                return result
-                
-            except Exception as e:
-                logger.error(f"Query execution attempt {attempt + 1} failed: {e}")
-                if attempt < self.connection_retries - 1:
-                    await asyncio.sleep(self.connection_delay)
-                else:
-                    raise
-            finally:
-                # إغلاق مباشر للاتصال - أهم تحسين
-                if conn:
-                    try:
-                        await conn.close()
-                        logger.debug("Database connection closed immediately")
-                    except Exception as close_error:
-                        logger.warning(f"Error closing connection: {close_error}")
-    
     async def initialize(self):
-        """تهيئة قاعدة البيانات المحسنة - مباشرة وسريعة"""
+        """تهيئة قاعدة البيانات - بسيطة ومباشرة"""
         try:
-            await self.create_tables()
-            logger.info("✅ Enhanced PostgreSQL Database initialized - Direct connections only")
-            print("✅ تم الاتصال بـ PostgreSQL المحسن - اتصال مباشر بدون pools")
+            conn = await self.get_connection()
+            try:
+                await self.create_tables(conn)
+                print(f"تم الاتصال بـ PostgreSQL بنجاح - بدون pool")
+            finally:
+                await conn.close()
         except Exception as e:
-            logger.error(f"Database initialization failed: {e}")
-            print(f"❌ خطأ في تهيئة قاعدة البيانات المحسنة: {e}")
+            print(f"خطأ في الاتصال بقاعدة البيانات: {e}")
             raise
     
-    async def create_tables(self):
-        """إنشاء الجداول المحسنة - مباشرة وسريعة"""
-        
-        # جدول المستخدمين المحسن
-        users_table = """
+    async def create_tables(self, conn):
+        """إنشاء الجداول - مباشرة"""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
@@ -487,10 +321,9 @@ class EnhancedDirectDatabaseManager:
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
-        """
+        """)
         
-        # جدول المفاتيح المحسن
-        license_keys_table = """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS license_keys (
                 key TEXT PRIMARY KEY,
                 created_date TIMESTAMP NOT NULL,
@@ -503,10 +336,9 @@ class EnhancedDirectDatabaseManager:
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
-        """
+        """)
         
-        # جدول التحليلات المحسن
-        analyses_table = """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS analyses (
                 id TEXT PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -516,464 +348,170 @@ class EnhancedDirectDatabaseManager:
                 result TEXT NOT NULL,
                 gold_price DECIMAL(10,2) NOT NULL,
                 image_data BYTEA,
-                performance_metrics JSONB DEFAULT '{}',
+                indicators JSONB DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT NOW()
             )
-        """
+        """)
         
-        # إنشاء الجداول
-        await self.execute_with_retry(users_table)
-        await self.execute_with_retry(license_keys_table)
-        await self.execute_with_retry(analyses_table)
+        # إنشاء الفهارس
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_license_key ON users(license_key)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_license_keys_user_id ON license_keys(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)")
         
-        # إنشاء فهارس محسنة للأداء
-        indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_users_license_key ON users(license_key)",
-            "CREATE INDEX IF NOT EXISTS idx_users_last_activity ON users(last_activity)",
-            "CREATE INDEX IF NOT EXISTS idx_license_keys_user_id ON license_keys(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_analyses_timestamp ON analyses(timestamp)"
-        ]
-        
-        for index in indexes:
-            try:
-                await self.execute_with_retry(index)
-            except Exception as e:
-                logger.warning(f"Index creation failed (may already exist): {e}")
-        
-        logger.info("✅ Enhanced database tables and indexes created")
-        print("✅ تم إنشاء/التحقق من الجداول والفهارس المحسنة")
+        print(f"تم إنشاء/التحقق من الجداول - مباشرة")
     
-    async def save_user(self, user) -> bool:
-        """حفظ/تحديث المستخدم - مباشر ومحسن"""
-        query = """
-            INSERT INTO users (user_id, username, first_name, is_activated, activation_date, 
-                             last_activity, total_requests, total_analyses, subscription_tier, 
-                             settings, license_key, daily_requests_used, last_request_date, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
-            ON CONFLICT (user_id) DO UPDATE SET
-                username = EXCLUDED.username,
-                first_name = EXCLUDED.first_name,
-                is_activated = EXCLUDED.is_activated,
-                activation_date = EXCLUDED.activation_date,
-                last_activity = EXCLUDED.last_activity,
-                total_requests = EXCLUDED.total_requests,
-                total_analyses = EXCLUDED.total_analyses,
-                subscription_tier = EXCLUDED.subscription_tier,
-                settings = EXCLUDED.settings,
-                license_key = EXCLUDED.license_key,
-                daily_requests_used = EXCLUDED.daily_requests_used,
-                last_request_date = EXCLUDED.last_request_date,
-                updated_at = NOW()
-        """
-        
+    async def save_user(self, user: User):
+        """حفظ/تحديث بيانات المستخدم - مباشر"""
         try:
-            await self.execute_with_retry(
-                query,
-                user.user_id, user.username, user.first_name, user.is_activated,
-                user.activation_date, user.last_activity, user.total_requests,
-                user.total_analyses, user.subscription_tier, 
-                json.dumps(user.settings) if hasattr(user, 'settings') else '{}',
-                user.license_key if hasattr(user, 'license_key') else None,
-                user.daily_requests_used if hasattr(user, 'daily_requests_used') else 0,
-                user.last_request_date if hasattr(user, 'last_request_date') else None
-            )
-            logger.debug(f"User {user.user_id} saved successfully")
-            return True
+            conn = await self.get_connection()
+            try:
+                await conn.execute("""
+                    INSERT INTO users (user_id, username, first_name, is_activated, activation_date, 
+                                     last_activity, total_requests, total_analyses, subscription_tier, 
+                                     settings, license_key, daily_requests_used, last_request_date, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        username = EXCLUDED.username,
+                        first_name = EXCLUDED.first_name,
+                        is_activated = EXCLUDED.is_activated,
+                        activation_date = EXCLUDED.activation_date,
+                        last_activity = EXCLUDED.last_activity,
+                        total_requests = EXCLUDED.total_requests,
+                        total_analyses = EXCLUDED.total_analyses,
+                        subscription_tier = EXCLUDED.subscription_tier,
+                        settings = EXCLUDED.settings,
+                        license_key = EXCLUDED.license_key,
+                        daily_requests_used = EXCLUDED.daily_requests_used,
+                        last_request_date = EXCLUDED.last_request_date,
+                        updated_at = NOW()
+                """, user.user_id, user.username, user.first_name, user.is_activated, 
+                     user.activation_date, user.last_activity, user.total_requests, 
+                     user.total_analyses, user.subscription_tier, json.dumps(user.settings),
+                     user.license_key, user.daily_requests_used, user.last_request_date)
+            finally:
+                await conn.close()
         except Exception as e:
             logger.error(f"Error saving user {user.user_id}: {e}")
-            return False
     
-    async def get_user(self, user_id: int):
-        """جلب المستخدم - مباشر ومحسن"""
-        query = """
-            SELECT user_id, username, first_name, is_activated, activation_date,
-                   last_activity, total_requests, total_analyses, subscription_tier,
-                   settings, license_key, daily_requests_used, last_request_date
-            FROM users WHERE user_id = $1
-        """
-        
+    async def get_user(self, user_id: int) -> Optional[User]:
+        """جلب بيانات المستخدم - مباشر"""
         try:
-            row = await self.execute_with_retry(query, user_id, fetch_method="fetchrow")
-            if row:
-                from main import User  # استيراد محلي لتجنب التبعية الدائرية
-                user = User(
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    first_name=row['first_name'],
-                    is_activated=row['is_activated'],
-                    activation_date=row['activation_date'],
-                    last_activity=row['last_activity'],
-                    total_requests=row['total_requests'],
-                    total_analyses=row['total_analyses']
-                )
-                # إضافة الخصائص الإضافية
-                user.subscription_tier = row['subscription_tier'] or 'basic'
-                user.settings = json.loads(row['settings'] or '{}')
-                user.license_key = row['license_key']
-                user.daily_requests_used = row['daily_requests_used'] or 0
-                user.last_request_date = row['last_request_date']
-                return user
-            return None
+            conn = await self.get_connection()
+            try:
+                row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
+                if row:
+                    return User(
+                        user_id=row['user_id'],
+                        username=row['username'],
+                        first_name=row['first_name'],
+                        is_activated=row['is_activated'],
+                        activation_date=row['activation_date'],
+                        last_activity=row['last_activity'],
+                        total_requests=row['total_requests'],
+                        total_analyses=row['total_analyses'],
+                        subscription_tier=row['subscription_tier'],
+                        settings=row['settings'] or {},
+                        license_key=row['license_key'],
+                        daily_requests_used=row['daily_requests_used'],
+                        last_request_date=row['last_request_date']
+                    )
+            finally:
+                await conn.close()
         except Exception as e:
             logger.error(f"Error getting user {user_id}: {e}")
-            return None
+        return None
     
-    async def get_all_users(self) -> List:
-        """جلب جميع المستخدمين - محسن"""
-        query = """
-            SELECT user_id, username, first_name, is_activated, activation_date,
-                   last_activity, total_requests, total_analyses, subscription_tier,
-                   settings, license_key, daily_requests_used, last_request_date
-            FROM users ORDER BY last_activity DESC
-        """
-        
+    async def get_all_users(self) -> List[User]:
+        """جلب جميع المستخدمين - مباشر"""
         try:
-            rows = await self.execute_with_retry(query, fetch_method="fetch")
-            users = []
-            for row in rows:
-                from main import User  # استيراد محلي
-                user = User(
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    first_name=row['first_name'],
-                    is_activated=row['is_activated'],
-                    activation_date=row['activation_date'],
-                    last_activity=row['last_activity'],
-                    total_requests=row['total_requests'],
-                    total_analyses=row['total_analyses']
-                )
-                # إضافة الخصائص الإضافية
-                user.subscription_tier = row['subscription_tier'] or 'basic'
-                user.settings = json.loads(row['settings'] or '{}')
-                user.license_key = row['license_key']
-                user.daily_requests_used = row['daily_requests_used'] or 0
-                user.last_request_date = row['last_request_date']
-                users.append(user)
-            return users
+            conn = await self.get_connection()
+            try:
+                rows = await conn.fetch("SELECT * FROM users")
+                users = []
+                for row in rows:
+                    users.append(User(
+                        user_id=row['user_id'],
+                        username=row['username'],
+                        first_name=row['first_name'],
+                        is_activated=row['is_activated'],
+                        activation_date=row['activation_date'],
+                        last_activity=row['last_activity'],
+                        total_requests=row['total_requests'],
+                        total_analyses=row['total_analyses'],
+                        subscription_tier=row['subscription_tier'],
+                        settings=row['settings'] or {},
+                        license_key=row['license_key'],
+                        daily_requests_used=row['daily_requests_used'],
+                        last_request_date=row['last_request_date']
+                    ))
+                return users
+            finally:
+                await conn.close()
         except Exception as e:
             logger.error(f"Error getting all users: {e}")
             return []
     
-    async def save_license_key(self, license_key) -> bool:
-        """حفظ/تحديث مفتاح التفعيل - مباشر ومحسن"""
-        query = """
-            INSERT INTO license_keys (key, created_date, total_limit, used_total, 
-                                    is_active, user_id, username, notes, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-            ON CONFLICT (key) DO UPDATE SET
-                total_limit = EXCLUDED.total_limit,
-                used_total = EXCLUDED.used_total,
-                is_active = EXCLUDED.is_active,
-                user_id = EXCLUDED.user_id,
-                username = EXCLUDED.username,
-                notes = EXCLUDED.notes,
-                updated_at = NOW()
-        """
-        
+    async def save_license_key(self, license_key: LicenseKey):
+        """حفظ/تحديث مفتاح التفعيل - مباشر"""
         try:
-            await self.execute_with_retry(
-                query,
-                license_key.key, license_key.created_date, license_key.total_limit,
-                license_key.used_total, license_key.is_active, license_key.user_id,
-                license_key.username, license_key.notes
-            )
-            logger.debug(f"License key {license_key.key} saved successfully")
-            return True
+            conn = await self.get_connection()
+            try:
+                await conn.execute("""
+                    INSERT INTO license_keys (key, created_date, total_limit, used_total, 
+                                            is_active, user_id, username, notes, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                    ON CONFLICT (key) DO UPDATE SET
+                        total_limit = EXCLUDED.total_limit,
+                        used_total = EXCLUDED.used_total,
+                        is_active = EXCLUDED.is_active,
+                        user_id = EXCLUDED.user_id,
+                        username = EXCLUDED.username,
+                        notes = EXCLUDED.notes,
+                        updated_at = NOW()
+                """, license_key.key, license_key.created_date, license_key.total_limit,
+                     license_key.used_total, license_key.is_active, license_key.user_id,
+                     license_key.username, license_key.notes)
+            finally:
+                await conn.close()
         except Exception as e:
-            logger.error(f"Error saving license key {license_key.key}: {e}")
-            return False
+            logger.error(f"Error saving license key: {e}")
     
-    async def get_all_license_keys(self) -> List:
-        """جلب جميع مفاتيح التفعيل - محسن"""
-        query = """
-            SELECT key, created_date, total_limit, used_total, is_active, 
-                   user_id, username, notes
-            FROM license_keys ORDER BY created_date DESC
-        """
-        
+    async def get_license_key(self, key: str) -> Optional[LicenseKey]:
+        """جلب مفتاح تفعيل - مباشر"""
         try:
-            rows = await self.execute_with_retry(query, fetch_method="fetch")
-            keys = []
-            for row in rows:
-                from main import LicenseKey  # استيراد محلي
-                key = LicenseKey(
-                    key=row['key'],
-                    created_date=row['created_date'],
-                    total_limit=row['total_limit'],
-                    used_total=row['used_total'],
-                    is_active=row['is_active'],
-                    user_id=row['user_id'],
-                    username=row['username'],
-                    notes=row['notes'] or ""
-                )
-                keys.append(key)
-            return keys
-        except Exception as e:
-            logger.error(f"Error getting all license keys: {e}")
-            return []
-
-# ==================== Enhanced License Manager with Direct Database Connection ====================
-class EnhancedLicenseManager:
-    """مدير المفاتيح المحسن - اتصال مباشر بقاعدة البيانات"""
-    
-    def __init__(self, database_manager: EnhancedDirectDatabaseManager):
-        self.database = database_manager
-        self.license_keys: Dict[str, Dict] = {}
-        self.static_keys_initialized = False
-        
-    async def initialize(self):
-        """تحميل المفاتيح وإنشاء المفاتيح الثابتة المحسنة"""
-        try:
-            # تحميل المفاتيح من قاعدة البيانات
-            await self.load_keys_from_database()
-            
-            # ضمان وجود المفاتيح الثابتة الـ 40
-            await self.ensure_static_keys()
-            
-            logger.info(f"✅ Enhanced License Manager initialized with {len(self.license_keys)} keys")
-            print(f"✅ تم تحميل {len(self.license_keys)} مفتاح محسن - اتصال مباشر")
-        except Exception as e:
-            logger.error(f"License manager initialization failed: {e}")
-            print(f"❌ خطأ في تحميل مدير المفاتيح: {e}")
-    
-    async def load_keys_from_database(self):
-        """تحميل جميع المفاتيح من قاعدة البيانات - محسن"""
-        try:
-            keys_list = await self.database.get_all_license_keys()
-            self.license_keys = {}
-            
-            for key_obj in keys_list:
-                self.license_keys[key_obj.key] = {
-                    "limit": key_obj.total_limit,
-                    "used": key_obj.used_total,
-                    "active": key_obj.is_active,
-                    "user_id": key_obj.user_id,
-                    "username": key_obj.username,
-                    "created_date": key_obj.created_date,
-                    "notes": key_obj.notes
-                }
-            
-            logger.info(f"Loaded {len(self.license_keys)} keys from database")
-        except Exception as e:
-            logger.error(f"Error loading keys from database: {e}")
-            self.license_keys = {}
-    
-    async def ensure_static_keys(self):
-        """ضمان وجود المفاتيح الثابتة الـ 40 المحسنة"""
-        try:
-            for key, data in PERMANENT_LICENSE_KEYS.items():
-                if key not in self.license_keys:
-                    # إنشاء مفتاح جديد
-                    license_key = LicenseKey(
-                        key=key,
-                        created_date=datetime.now(),
-                        total_limit=data["limit"],
-                        used_total=data["used"],
-                        is_active=data["active"],
-                        user_id=data["user_id"],
-                        username=data["username"],
-                        notes="مفتاح ثابت محسن - لا يُحذف أبداً"
+            conn = await self.get_connection()
+            try:
+                row = await conn.fetchrow("SELECT * FROM license_keys WHERE key = $1", key)
+                if row:
+                    return LicenseKey(
+                        key=row['key'],
+                        created_date=row['created_date'],
+                        total_limit=row['total_limit'],
+                        used_total=row['used_total'],
+                        is_active=row['is_active'],
+                        user_id=row['user_id'],
+                        username=row['username'],
+                        notes=row['notes'] or ''
                     )
-                    
-                    # حفظ في قاعدة البيانات
-                    success = await self.database.save_license_key(license_key)
-                    if success:
-                        # إضافة للقاموس المحلي
-                        self.license_keys[key] = {
-                            "limit": data["limit"],
-                            "used": data["used"],
-                            "active": data["active"],
-                            "user_id": data["user_id"],
-                            "username": data["username"],
-                            "created_date": license_key.created_date,
-                            "notes": license_key.notes
-                        }
-                        logger.info(f"Static key created: {key}")
-                        print(f"✅ تم إنشاء المفتاح الثابت: {key}")
-            
-            self.static_keys_initialized = True
-            logger.info("✅ All 40 static keys ensured")
+            finally:
+                await conn.close()
         except Exception as e:
-            logger.error(f"Error ensuring static keys: {e}")
+            logger.error(f"Error getting license key: {e}")
+        return None
     
-    async def validate_key(self, key: str, user_id: int) -> Tuple[bool, str]:
-        """فحص صحة المفتاح المحسن"""
+    async def get_all_license_keys(self) -> Dict[str, LicenseKey]:
+        """جلب جميع مفاتيح التفعيل - مباشر"""
         try:
-            if key not in self.license_keys:
-                return False, f"{emoji('cross')} المفتاح غير موجود أو منتهي الصلاحية"
-            
-            key_data = self.license_keys[key]
-            
-            # فحص حالة المفتاح
-            if not key_data["active"]:
-                return False, f"{emoji('cross')} المفتاح معطل مؤقتاً"
-            
-            # فحص الحد الأقصى
-            if key_data["used"] >= key_data["limit"]:
-                return False, f"{emoji('cross')} تم استنفاد المفتاح ({key_data['used']}/{key_data['limit']})"
-            
-            # فحص ربط المفتاح بمستخدم آخر
-            if key_data["user_id"] and key_data["user_id"] != user_id:
-                return False, f"{emoji('cross')} المفتاح مُفعل لمستخدم آخر"
-            
-            remaining = key_data["limit"] - key_data["used"]
-            return True, f"{emoji('check')} المفتاح صالح - متبقي: {remaining} استخدام"
-            
-        except Exception as e:
-            logger.error(f"Error validating key {key}: {e}")
-            return False, f"{emoji('cross')} خطأ في فحص المفتاح"
-    
-    async def use_key(self, key: str, user_id: int, username: str = None, analysis_type: str = "general") -> Tuple[bool, str]:
-        """استخدام المفتاح المحسن"""
-        try:
-            # فحص صحة المفتاح أولاً
-            is_valid, message = await self.validate_key(key, user_id)
-            if not is_valid:
-                return False, message
-            
-            key_data = self.license_keys[key]
-            
-            # ربط المفتاح بالمستخدم إذا لم يكن مربوطاً
-            if not key_data["user_id"]:
-                key_data["user_id"] = user_id
-                key_data["username"] = username
-            
-            # زيادة عدد الاستخدامات
-            key_data["used"] += 1
-            
-            # تحديث في قاعدة البيانات
-            license_key = LicenseKey(
-                key=key,
-                created_date=key_data["created_date"],
-                total_limit=key_data["limit"],
-                used_total=key_data["used"],
-                is_active=key_data["active"],
-                user_id=key_data["user_id"],
-                username=key_data["username"],
-                notes=key_data["notes"]
-            )
-            
-            success = await self.database.save_license_key(license_key)
-            if not success:
-                # إرجاع العداد في حالة فشل الحفظ
-                key_data["used"] -= 1
-                return False, f"{emoji('cross')} خطأ في حفظ استخدام المفتاح"
-            
-            remaining = key_data["limit"] - key_data["used"]
-            
-            if remaining == 0:
-                return True, f"{emoji('check')} تم التحليل بنجاح!\n{emoji('warning')} تم استنفاد المفتاح - ادخل مفتاح جديد للمتابعة"
-            else:
-                return True, f"{emoji('check')} تم التحليل بنجاح!\n{emoji('key')} متبقي: {remaining} استخدام"
-                
-        except Exception as e:
-            logger.error(f"Error using key {key}: {e}")
-            return False, f"{emoji('cross')} خطأ في استخدام المفتاح"
-    
-    async def get_key_info(self, key: str) -> Optional[Dict]:
-        """الحصول على معلومات المفتاح المحسنة"""
-        try:
-            if key not in self.license_keys:
-                return None
-            
-            key_data = self.license_keys[key]
-            return {
-                "key": key,
-                "limit": key_data["limit"],
-                "used": key_data["used"],
-                "remaining": key_data["limit"] - key_data["used"],
-                "active": key_data["active"],
-                "user_id": key_data["user_id"],
-                "username": key_data["username"],
-                "created_date": key_data["created_date"],
-                "notes": key_data["notes"]
-            }
-        except Exception as e:
-            logger.error(f"Error getting key info for {key}: {e}")
-            return None
-    
-    async def get_user_key(self, user_id: int) -> Optional[str]:
-        """البحث عن مفتاح المستخدم"""
-        try:
-            for key, data in self.license_keys.items():
-                if data["user_id"] == user_id and data["active"]:
-                    return key
-            return None
-        except Exception as e:
-            logger.error(f"Error finding key for user {user_id}: {e}")
-            return None
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """إحصائيات المفاتيح المحسنة"""
-        try:
-            active_keys = sum(1 for k in self.license_keys.values() if k["active"])
-            used_keys = sum(1 for k in self.license_keys.values() if k["used"] > 0)
-            exhausted_keys = sum(1 for k in self.license_keys.values() if k["used"] >= k["limit"])
-            total_usage = sum(k["used"] for k in self.license_keys.values())
-            
-            return {
-                "total_keys": len(self.license_keys),
-                "active_keys": active_keys,
-                "used_keys": used_keys,
-                "exhausted_keys": exhausted_keys,
-                "total_usage": total_usage,
-                "available_keys": active_keys - exhausted_keys
-            }
-        except Exception as e:
-            logger.error(f"Error getting license stats: {e}")
-            return {}
-
-# ==================== Enhanced Database Manager Integration ====================
-class EnhancedDBManager:
-    """مدير البيانات المحسن مع الاتصال المباشر"""
-    
-    def __init__(self, database_manager: EnhancedDirectDatabaseManager):
-        self.database = database_manager
-        self.users: Dict[int, User] = {}
-        self.analyses: List[Analysis] = []
-        
-    async def initialize(self):
-        """تحميل البيانات المحسنة"""
-        try:
-            users_list = await self.database.get_all_users()
-            self.users = {user.user_id: user for user in users_list}
-            logger.info(f"✅ Enhanced DB Manager loaded {len(self.users)} users")
-            print(f"✅ تم تحميل {len(self.users)} مستخدم - اتصال مباشر محسن")
-        except Exception as e:
-            logger.error(f"DB Manager initialization failed: {e}")
-            print(f"❌ خطأ في تحميل مدير البيانات: {e}")
-            self.users = {}
-    
-    async def add_user(self, user: User):
-        """إضافة/تحديث مستخدم محسن"""
-        try:
-            self.users[user.user_id] = user
-            success = await self.database.save_user(user)
-            if success:
-                logger.debug(f"User {user.user_id} added/updated successfully")
-            else:
-                logger.warning(f"Failed to save user {user.user_id} to database")
-        except Exception as e:
-            logger.error(f"Error adding user {user.user_id}: {e}")
-    
-    async def get_user(self, user_id: int) -> Optional[User]:
-        """جلب مستخدم محسن"""
-        try:
-            # البحث في الذاكرة أولاً
-            if user_id in self.users:
-                return self.users[user_id]
-            
-            # البحث في قاعدة البيانات
-            user = await self.database.get_user(user_id)
-            if user:
-                self.users[user_id] = user
-                return user
-            
-            return None
-        except Exception as e:
-            logger.error(f"Error getting user {user_id}: {e}")
-            return None
+            conn = await self.get_connection()
+            try:
+                rows = await conn.fetch("SELECT * FROM license_keys")
+                keys = {}
+                for row in rows:
+                    keys[row['key']] = LicenseKey(
+                        key=row['key'],
+                        created_date=row['created_date'],
+                        total_limit=row['total_limit'],
+                        used_total=row['used_total'],
                         is_active=row['is_active'],
                         user_id=row['user_id'],
                         username=row['username'],
